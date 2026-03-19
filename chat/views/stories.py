@@ -11,7 +11,8 @@ from chat.models import CustomUser, Story, StoryView, StoryLike, StoryReply, Cha
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 
 logger = logging.getLogger(__name__)
 
@@ -136,22 +137,31 @@ def repost_story(request):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def create_story(request):
     """FIXED - Create a new story - NOW SUPPORTS MULTIPLE STORIES PER USER AND IMAGE+TEXT COMBO"""
     try:
-        story_type = request.POST.get('story_type', 'text')
-        content = request.POST.get('content', '').strip()
-        background_color = request.POST.get('background_color', '#667eea')
-        text_color = request.POST.get('text_color', '#ffffff')
-        text_position = request.POST.get('text_position', 'center')
-        text_size = float(request.POST.get('text_size', '22'))
-        image_transform_json = request.POST.get('image_transform', '{}')
+        story_type = request.data.get('story_type', 'text')
+        content = request.data.get('content', '').strip()
+        background_color = request.data.get('background_color', '#667eea')
+        text_color = request.data.get('text_color', '#ffffff')
+        text_position = request.data.get('text_position', 'center')
+        text_size_val = request.data.get('text_size', '22')
         try:
-            image_transform = json.loads(image_transform_json)
+            text_size = float(text_size_val)
+        except (ValueError, TypeError):
+            text_size = 22.0
+            
+        image_transform_json = request.data.get('image_transform', '{}')
+        try:
+            if isinstance(image_transform_json, str):
+                image_transform = json.loads(image_transform_json)
+            else:
+                image_transform = image_transform_json
         except:
             image_transform = {}
             
-        media_file = request.FILES.get('media')
+        media_file = request.data.get('media')
         
         logger.info(f"Creating story: type={story_type}, content={content}, has_media={bool(media_file)}, text_position={text_position}")
         
@@ -362,6 +372,9 @@ def get_user_stories(request, username):
         logger.error(f"Error getting user stories: {e}")
         return Response({'success': False, 'error': str(e)})
 
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_following_stories(request):
     """Get stories from all users that the current user follows (Instagram-style feed)"""
     if not request.user.is_authenticated:

@@ -27,7 +27,8 @@ from chat.forms import ScribeForm, ProfileUpdateForm
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 
 logger = logging.getLogger(__name__)
 
@@ -668,22 +669,23 @@ def update_profile(request):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def post_scribe(request):
     """Post a scribe with proper duplicate prevention and validation"""
     logger.info(f"Scribe post attempt by user {request.user.id}")
 
     try:
-        # Parse form data properly
-        content = request.POST.get('content', '').strip()
-        image_file = request.FILES.get('image')
-        content_type = request.POST.get('content_type', 'text')
-        code_html = request.POST.get('code_html')
-        code_css = request.POST.get('code_css')
-        code_js = request.POST.get('code_js')
-        code_bundle = request.POST.get('code_bundle')
+        # Parse form data properly from request.data
+        content = request.data.get('content', '').strip()
+        image_file = request.data.get('image')  # MultiPartParser handles FILES in request.data
+        content_type = request.data.get('content_type', 'text')
+        code_html = request.data.get('code_html')
+        code_css = request.data.get('code_css')
+        code_js = request.data.get('code_js')
+        code_bundle = request.data.get('code_bundle')
 
-        repost_type = request.POST.get('repost_type')
-        repost_id = request.POST.get('repost_id')
+        repost_type = request.data.get('repost_type')
+        repost_id = request.data.get('repost_id')
 
         # Handle Reposts (including toggle + repost-of-repost flattening)
         if repost_type and repost_id:
@@ -1223,7 +1225,8 @@ def copy_post_link(request):
 def add_comment(request):
     """Add a comment to a scribe"""
     try:
-        data = json.loads(request.body)
+        # For @api_view, request.data is already parsed (as dict for JSON)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
         content = data.get('content', '').strip()
@@ -2974,6 +2977,7 @@ def track_omzo_view(request):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def upload_omzo(request):
     """API to upload a new omzo with compression"""
     # CHECK DAILY LIMIT (5 Omzo per day)
@@ -2990,8 +2994,8 @@ def upload_omzo(request):
         })
 
     try:
-        video_file = request.FILES.get('video')
-        caption = request.POST.get('caption', '')
+        video_file = request.data.get('video')
+        caption = request.data.get('caption', '')
 
         if not video_file:
             return Response({'success': False, 'error': 'No video provided'})

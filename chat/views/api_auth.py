@@ -6,6 +6,7 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
+from channels.db import database_sync_to_async
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -166,30 +167,32 @@ def api_register(request):
         return Response({'success': False, 'error': str(e)}, status=500)
 
 
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 
 @api_view(["GET", "POST"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def api_profile(request):
     """API endpoint to get or update current user profile"""
     user = request.user
 
     if request.method == 'POST':
         try:
-            # Handle file uploads
-            if 'avatar' in request.FILES:
-                user.profile_picture = request.FILES['avatar']
+            # Handle file uploads from request.data (MultiPartParser puts them there)
+            if 'avatar' in request.data:
+                user.profile_picture = request.data['avatar']
 
-            if 'cover_image' in request.FILES:
-                user.cover_image = request.FILES['cover_image']
+            if 'cover_image' in request.data:
+                user.cover_image = request.data['cover_image']
 
-            # Handle text fields
-            display_name = request.POST.get('displayName')
-            first_name = request.POST.get('first_name')
-            last_name = request.POST.get('last_name')
+            # Handle text fields from request.data
+            display_name = request.data.get('displayName')
+            first_name = request.data.get('first_name')
+            last_name = request.data.get('last_name')
 
             if display_name:
                 # Map mobile displayName to name and lastname
@@ -203,11 +206,11 @@ def api_profile(request):
                 if last_name:
                     user.lastname = last_name
 
-            username = request.POST.get('username')
+            username = request.data.get('username')
             if username:
                 user.username = username
 
-            bio = request.POST.get('bio')
+            bio = request.data.get('bio')
             if bio is not None:
                 user.bio = bio
 
@@ -495,3 +498,15 @@ def api_user_profile(request, username):
         'reposts': reposts_data,
         'omzos': omzos_data
     }, status=200)
+
+@database_sync_to_async
+def get_user_from_token_sync(token_key):
+    """Bridge for WebSocket authentication."""
+    try:
+        from rest_framework.authtoken.models import Token
+        token = Token.objects.select_related('user').get(key=token_key)
+        return token.user
+    except Exception:
+        from django.contrib.auth.models import AnonymousUser
+        return AnonymousUser()
+

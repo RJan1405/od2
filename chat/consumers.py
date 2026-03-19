@@ -963,11 +963,24 @@ class NotifyConsumer(AsyncWebsocketConsumer):
     """
 
     async def connect(self):
-        self.user = self.scope['user']
-        if not self.user.is_authenticated:
+        self.user = self.scope.get('user')
+        
+        # Fallback manual token check if middleware missed it
+        if not self.user or not self.user.is_authenticated:
+            from urllib.parse import parse_qs
+            query_string = self.scope.get('query_string', b'').decode()
+            params = parse_qs(query_string)
+            token_key = params.get('token', [None])[0]
+            if token_key:
+                from .views.api_auth import get_user_from_token_sync
+                self.user = await get_user_from_token_sync(token_key)
+                self.scope['user'] = self.user
+
+        if not self.user or not self.user.is_authenticated:
             logger.warning("[NotifyConsumer] Unauthenticated user attempted to connect")
             await self.close()
             return
+            
         self.group_name = f'user_notify_{self.user.id}'
         logger.info(f"[NotifyConsumer] User {self.user.id} ({self.user.username}) connected to group {self.group_name}")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
@@ -1282,7 +1295,19 @@ class OdnixGatewayConsumer(AsyncWebsocketConsumer):
 
 class SidebarConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        user = self.scope["user"]
+        user = self.scope.get("user")
+        
+        # Fallback manual token check
+        if not user or not user.is_authenticated:
+            from urllib.parse import parse_qs
+            query_string = self.scope.get('query_string', b'').decode()
+            params = parse_qs(query_string)
+            token_key = params.get('token', [None])[0]
+            if token_key:
+                from .views.api_auth import get_user_from_token_sync
+                user = await get_user_from_token_sync(token_key)
+                self.scope['user'] = user
+
         if not user or not user.is_authenticated:
             await self.close()
             return
@@ -1297,10 +1322,11 @@ class SidebarConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(
-            self.group_name,
-            self.channel_name
-        )
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(
+                self.group_name,
+                self.channel_name
+            )
 
     async def sidebar_update(self, event):
         await self.send(text_data=json.dumps({
