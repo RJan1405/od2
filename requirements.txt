@@ -3,6 +3,8 @@ asgiref==3.7.2
 sqlparse==0.4.4
 tzdata==2024.1
 django-jazzmin==3.0.1
+django-cors-headers==4.3.1
+djangorestframework==3.15.1
 
 # Production dependencies
 # Pillow 10.x fails on Python 3.13; use 11.x
@@ -16,6 +18,7 @@ daphne==4.0.0
 whitenoise==6.6.0
 python-dotenv==1.0.0
 dj-database-url==2.1.0
+psycopg2-binary==2.9.9
 moviepy==1.0.3
 imageio-ffmpeg==0.4.9
 pycryptodome==3.19.0

@@ -4,22 +4,17 @@ Django settings for odnix project.
 
 import os
 from pathlib import Path
-import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-key-in-production-123456789')
+SECRET_KEY = 'django-insecure-change-this-key-in-production-123456789'
 
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = True
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
 
-# Render specific
-RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_EXTERNAL_HOSTNAME:
-    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-
 # FIXED: Site domain for clean invite links
-SITE_DOMAIN = 'https://odnixdeploy.onrender.com'
+# SITE_DOMAIN = 'http://192.168.104.187:8000'
+SITE_DOMAIN = 'http://192.168.104.187:8000'
 
 # CORS settings for React frontend
 CORS_ALLOWED_ORIGINS = [
@@ -32,7 +27,6 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.104.187:8000",
     "http://192.168.0.104:8080",
     "http://127.0.0.1:3000",
-    "https://odnixdeploy.onrender.com",
 ]
 CORS_ALLOW_CREDENTIALS = True  # Required for session-based auth
 CORS_ALLOW_HEADERS = [
@@ -59,7 +53,6 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8080",
     "http://127.0.0.1:3000",
     "https://*.trycloudflare.com",  # Allow all Cloudflare tunnels
-    "https://odnixdeploy.onrender.com",
 ]
 
 INSTALLED_APPS = [
