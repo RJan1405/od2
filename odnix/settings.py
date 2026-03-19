@@ -8,9 +8,29 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env')
+except ImportError:
+    pass
+
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-key-in-production-123456789')
 
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+
+# Security settings for production
+if not DEBUG:
+    # Use HTTPS for cookies and redirects
+    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # SECURE_HSTS_SECONDS = 31536000 # 1 year
+    # SECURE_HSTS_PRELOAD = True
+    # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Fixed ALLOWED_HOSTS for local + production
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
 
 # Render specific
@@ -18,22 +38,25 @@ RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
-# FIXED: Site domain for clean invite links
-SITE_DOMAIN = 'https://odnixdeploy.onrender.com'
+# Site domain for clean invite links (defaults to production if not in env)
+SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'https://odnixdeploy.onrender.com')
 
 # CORS settings for React frontend
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite dev server (default)
-    "http://localhost:8080",  # Vite dev server (configured)
-    "http://localhost:3000",  # Alternative React dev server
+# Defaults to localhost + production URL
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://localhost:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:8080",
-    "http://192.168.104.187:8080",
-    "http://192.168.104.187:8000",
-    "http://192.168.0.104:8080",
-    "http://127.0.0.1:3000",
     "https://odnixdeploy.onrender.com",
 ]
+
+env_cors = os.environ.get('CORS_ALLOWED_ORIGINS')
+if env_cors:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in env_cors.split(',')]
+else:
+    CORS_ALLOWED_ORIGINS = DEFAULT_CORS_ORIGINS
 CORS_ALLOW_CREDENTIALS = True  # Required for session-based auth
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -47,20 +70,15 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# CSRF trusted origins for POST requests (includes localhost + Cloudflare tunnel)
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:8080",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://192.168.104.187:8080",
-    "http://192.168.104.187:8000",
-    "http://192.168.0.104:8080",
-    "http://127.0.0.1:8080",
-    "http://127.0.0.1:3000",
-    "https://*.trycloudflare.com",  # Allow all Cloudflare tunnels
-    "https://odnixdeploy.onrender.com",
-]
+# CSRF trusted origins for POST requests
+env_csrf = os.environ.get('CSRF_TRUSTED_ORIGINS')
+if env_csrf:
+    CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in env_csrf.split(',')]
+    # Add Cloudflare tunnel pattern if not present
+    if "https://*.trycloudflare.com" not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append("https://*.trycloudflare.com")
+else:
+    CSRF_TRUSTED_ORIGINS = DEFAULT_CORS_ORIGINS + ["https://*.trycloudflare.com"]
 
 INSTALLED_APPS = [
     'jazzmin',  # Must be before django.contrib.admin
@@ -139,10 +157,10 @@ else:
     }
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=600
+    )
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -218,9 +236,8 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 # TODO: Replace with your actual Gmail address
-EMAIL_HOST_USER = 'optinal46@gmail.com'
-# TODO: Replace with your 16-char Google App Password (NOT your login password)
-EMAIL_HOST_PASSWORD = 'qxeo wtqn xpsn jvuv'
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'optinal46@gmail.com')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'qxeo wtqn xpsn jvuv')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # For development/testing - uncomment to see emails in console

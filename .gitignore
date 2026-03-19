@@ -1,9 +1,17 @@
+# Secrets
+.env
+*.env.local
+
 # Media and DB
 media/
 db.sqlite3
 *.sqlite3
 django_errors.log
 *.log
+
+# Static files
+staticfiles/
+static_root/
 
 # Dependencies
 node_modules/
@@ -15,6 +23,7 @@ ENV/
 bin/
 lib/
 share/
+# ENV/ # Commented out as it might conflict with some setups, but usually ignored
 
 # Python cache
 __pycache__/
@@ -22,12 +31,17 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Editor junk
+# OS / Editor junk
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
 # Build artifacts
 frontend/dist/
-odnix-mobile
+frontend/node_modules/
+odnix-mobile/
+dist/
+build/

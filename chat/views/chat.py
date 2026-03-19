@@ -1839,10 +1839,13 @@ def react_to_message(request, message_id):
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def update_typing_status(request, chat_id):
-    """Update typing status for a chat"""
-    from django.core.cache import cache
     try:
-        is_typing = request.POST.get('is_typing', 'false').lower() == 'true'
+        data = request.data
+        is_typing = data.get('is_typing')
+        if isinstance(is_typing, str):
+            is_typing = is_typing.lower() == 'true'
+        else:
+            is_typing = bool(is_typing)
 
         # Store typing status in cache (simple implementation)
         cache_key = f'chat_{chat_id}_typing'
@@ -2565,16 +2568,8 @@ def update_group_settings(request, chat_id):
         if chat.admin != request.user:
             return Response({'success': False, 'error': 'Only the group admin can update settings'}, status=403)
 
-        # Support both JSON body and multipart/form-data (for file upload)
-        data = {}
-        if request.content_type and request.content_type.startswith('multipart/'):
-            # FormData - fields are in request.POST, files in request.FILES
-            data = request.POST.dict()
-        else:
-            try:
-                data = request.data
-            except Exception:
-                data = {}
+        # Use DRF request.data which handles both JSON and Multipart/form-data
+        data = request.data or {}
 
         # Update fields if provided
         if 'name' in data:
@@ -2617,7 +2612,8 @@ def update_group_settings(request, chat_id):
                 return Response({'success': False, 'error': 'Failed to remove group avatar'})
 
         # Handle group avatar upload (multipart/form-data)
-        if request.FILES.get('group_avatar'):
+        avatar_file = request.data.get('group_avatar')
+        if avatar_file:
             try:
                 # assign uploaded file to ImageField and save
                 if getattr(chat, 'group_avatar', None):
@@ -2625,7 +2621,7 @@ def update_group_settings(request, chat_id):
                         chat.group_avatar.delete(save=False)
                     except Exception:
                         logger.exception('Failed deleting old avatar file')
-                chat.group_avatar = request.FILES.get('group_avatar')
+                chat.group_avatar = avatar_file
                 chat.save()
             except Exception as e:
                 logger.error(f"Failed to save group avatar: {str(e)}")

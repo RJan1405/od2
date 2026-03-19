@@ -29,8 +29,8 @@ urlpatterns = [
     path('api/csrf/', api_auth.get_csrf_token, name='api_csrf'),
 
     # API endpoints for React Chat
-    path('api/chat/<int:chat_id>/details/',
-         chat_api.get_chat_details_api, name='api_chat_details'),
+    # path('api/chat/<int:chat_id>/details/') is defined later in line 122
+
 
     # Read Receipt and Unread Count APIs
     path('api/messages/mark-read/', read_receipts.mark_messages_read,
