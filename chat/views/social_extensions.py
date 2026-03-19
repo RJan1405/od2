@@ -3,10 +3,16 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 import logging
 from chat.models import Omzo, OmzoLike, OmzoDislike, SavedOmzoItem
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_omzo_detail(request, omzo_id):
     """Get a single Omzo by ID (API)"""
     try:
@@ -43,7 +49,7 @@ def get_omzo_detail(request, omzo_id):
             'feedType': 'omzo'
         }
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'omzo': omzo_data
         })
@@ -52,4 +58,4 @@ def get_omzo_detail(request, omzo_id):
         import traceback
         logger.error(f"Error in get_omzo_detail: {str(e)}")
         logger.error(traceback.format_exc())
-        return JsonResponse({'success': False, 'error': f'Failed to get Omzo: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to get Omzo: {str(e)}'})

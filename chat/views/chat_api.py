@@ -5,11 +5,17 @@ from django.views.decorators.http import require_GET
 from chat.models import Chat, Message, MessageRead, CustomUser
 from django.db.models import Prefetch
 import logging
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
-@login_required
 @require_GET
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_details_api(request, chat_id):
     """
     API to get full details of a chat including messages and metadata.
@@ -125,7 +131,7 @@ def get_chat_details_api(request, chat_id):
             'is_pinned': msg.is_pinned
         })
 
-    return JsonResponse({
+    return Response({
         'success': True,
         'chat': {
             'id': chat.id,

@@ -27,6 +27,10 @@ from chat.forms import ScribeForm
 from .media import handle_media_upload
 from django.conf import settings
 import json as _json
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +123,9 @@ def get_gender_balanced_suggestions(user, total_count=5, female_priority=3, male
     return suggestions[:total_count]
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def dashboard(request):
     """FIXED - Enhanced dashboard with proper multiple stories support"""
 
@@ -346,7 +352,9 @@ def dashboard(request):
     return render(request, 'chat/dashboard.html', context)
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def chat_view(request, chat_id):
     # User chats split by type, with last_message and unread_count
     user_chats = Chat.objects.filter(participants=request.user).select_related(
@@ -502,7 +510,9 @@ def chat_view(request, chat_id):
     return render(request, 'chat/chat_detail.html', context)
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def messages_page(request):
     """Dedicated messages page to pick a chat (replaces sidebar/panel)."""
     # User chats split by type, with last_message and unread_count
@@ -592,7 +602,9 @@ def messages_page(request):
     return render(request, 'chat/messages.html', context)
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_messages(request, chat_id):
     """FIXED - Get chat messages with proper API response"""
     chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
@@ -687,14 +699,15 @@ def get_chat_messages(request, chat_id):
 
         messages_data.append(message_data)
 
-    return JsonResponse({
+    return Response({
         'messages': messages_data,
         'chat_updated': chat.updated_at.isoformat()
     })
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def send_message(request):
     try:
         chat_id = request.POST.get('chat_id')
@@ -706,7 +719,7 @@ def send_message(request):
 
         # Allow empty content if sharing something
         if not content and not media_file and not shared_scribe_id and not shared_omzo_id:
-            return JsonResponse({'success': False, 'error': 'Message cannot be empty'})
+            return Response({'success': False, 'error': 'Message cannot be empty'})
 
         chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
 
@@ -730,7 +743,7 @@ def send_message(request):
             media_url, media_type, media_filename, media_size, upload_error = handle_media_upload(
                 media_file)
             if not media_url:
-                return JsonResponse({'success': False, 'error': upload_error or 'Failed to upload media file'})
+                return Response({'success': False, 'error': upload_error or 'Failed to upload media file'})
 
         message_type = 'media' if media_file else 'text'
 
@@ -764,7 +777,7 @@ def send_message(request):
         # 🔥 Broadcast the message to all participants via WebSocket
         broadcast_message_to_chat(chat, message, exclude_sender=True)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': {
                 'id': message.id,
@@ -813,13 +826,13 @@ def send_message(request):
 
     except Exception as e:
         logger.error(f"Error in send_message: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to send message'})
+        return Response({'success': False, 'error': 'Failed to send message'})
 
 
 def get_chats_api(request):
     """API endpoint to get user's chats for the slide-in panel"""
     if not request.user.is_authenticated:
-        return JsonResponse({'success': True, 'chats': []})
+        return Response({'success': True, 'chats': []})
 
     try:
         user_chats = Chat.objects.filter(
@@ -914,14 +927,15 @@ def get_chats_api(request):
 
             chats_data.append(chat_info)
 
-        return JsonResponse({'success': True, 'chats': chats_data})
+        return Response({'success': True, 'chats': chats_data})
     except Exception as e:
         logger.error(f"Error in get_chats_api: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to load chats'})
+        return Response({'success': False, 'error': 'Failed to load chats'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def create_chat(request):
     try:
         data = json.loads(request.body)
@@ -930,7 +944,7 @@ def create_chat(request):
         other_user = get_object_or_404(CustomUser, username=username)
 
         if other_user == request.user:
-            return JsonResponse({'success': False, 'error': 'Cannot create chat with yourself'})
+            return Response({'success': False, 'error': 'Cannot create chat with yourself'})
 
         # Check if chat already exists
         existing_chat = Chat.objects.filter(
@@ -942,7 +956,7 @@ def create_chat(request):
             # Make sure creator has accepted this chat
             ChatAcceptance.objects.get_or_create(
                 chat=existing_chat, user=request.user)
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'chat_id': existing_chat.id,
                 'exists': True
@@ -955,7 +969,7 @@ def create_chat(request):
         # Auto-accept for the creator (they initiated, so they've accepted)
         ChatAcceptance.objects.get_or_create(chat=chat, user=request.user)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'chat_id': chat.id,
             'exists': False
@@ -963,11 +977,12 @@ def create_chat(request):
 
     except Exception as e:
         logger.error(f"Error in create_chat: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to create chat'})
+        return Response({'success': False, 'error': 'Failed to create chat'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def create_group(request):
     try:
         # Handle both JSON and Multipart (FormData)
@@ -1005,13 +1020,13 @@ def create_group(request):
             is_public = bool(is_public_val)
 
         if not name:
-            return JsonResponse({'success': False, 'error': 'Group name is required'})
+            return Response({'success': False, 'error': 'Group name is required'})
 
         if len(name) > 100:
-            return JsonResponse({'success': False, 'error': 'Group name too long'})
+            return Response({'success': False, 'error': 'Group name too long'})
 
         if max_participants < 2 or max_participants > 500:
-            return JsonResponse({'success': False, 'error': 'Max participants must be between 2 and 500'})
+            return Response({'success': False, 'error': 'Max participants must be between 2 and 500'})
 
         group_avatar = request.FILES.get('avatar')
 
@@ -1047,7 +1062,7 @@ def create_group(request):
             message_type='system'
         )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'data': {
                 'group': {
@@ -1064,11 +1079,12 @@ def create_group(request):
         import traceback
         logger.error(f"Error in create_group: {str(e)}")
         logger.error(traceback.format_exc())
-        return JsonResponse({'success': False, 'error': f'Failed to create group: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to create group: {str(e)}'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def join_group_api(request):
     """API endpoint to join a group by ID (for public groups from discover page)"""
     try:
@@ -1076,20 +1092,20 @@ def join_group_api(request):
         group_id = data.get('group_id')
 
         if not group_id:
-            return JsonResponse({'success': False, 'error': 'Group ID is required'})
+            return Response({'success': False, 'error': 'Group ID is required'})
 
         chat = Chat.objects.filter(id=group_id, chat_type='group').first()
 
         if not chat:
-            return JsonResponse({'success': False, 'error': 'Group not found'})
+            return Response({'success': False, 'error': 'Group not found'})
 
         # Check if already a member
         if chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'You are already a member of this group'})
+            return Response({'success': False, 'error': 'You are already a member of this group'})
 
         # Check if group is full
         if not chat.can_add_participants:
-            return JsonResponse({'success': False, 'error': 'This group is full'})
+            return Response({'success': False, 'error': 'This group is full'})
 
         # For public groups, add directly
         if chat.is_public:
@@ -1102,7 +1118,7 @@ def join_group_api(request):
                 message_type='system'
             )
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'chat_id': chat.id,
                 'message': f'You have joined {chat.name}!'
@@ -1116,7 +1132,7 @@ def join_group_api(request):
             ).first()
 
             if existing_request:
-                return JsonResponse({'success': False, 'error': 'You already have a pending request'})
+                return Response({'success': False, 'error': 'You already have a pending request'})
 
             GroupJoinRequest.objects.create(
                 group=chat,
@@ -1124,7 +1140,7 @@ def join_group_api(request):
                 message=''
             )
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'pending': True,
                 'message': f'Join request sent to {chat.name}'
@@ -1132,10 +1148,12 @@ def join_group_api(request):
 
     except Exception as e:
         logger.error(f"Error in join_group_api: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to join group'})
+        return Response({'success': False, 'error': 'Failed to join group'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def join_group_view(request, invite_code):
     chat = get_object_or_404(Chat, invite_code=invite_code, chat_type='group')
 
@@ -1371,7 +1389,9 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
     return paginated
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def discover_groups_view(request):
     """Explore page: show scribes and omzo from users NOT followed (discovery feed)."""
 
@@ -1429,7 +1449,9 @@ def discover_groups_view(request):
     return render(request, 'chat/discover_groups.html', context)
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def load_more_explore_content(request):
     """API endpoint for infinite scroll on explore page"""
     try:
@@ -1501,7 +1523,7 @@ def load_more_explore_content(request):
 
         has_next = len(data) >= per_page
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'content': data,
             'has_next': has_next,
@@ -1510,10 +1532,12 @@ def load_more_explore_content(request):
 
     except Exception as e:
         logger.error(f"Error in load_more_explore_content: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to load content'})
+        return Response({'success': False, 'error': 'Failed to load content'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def explore(request):
     """Explore page showing a vertical list of random scribes and a user search bar."""
     query = request.GET.get('q', '').strip()
@@ -1568,8 +1592,9 @@ def explore(request):
     return render(request, 'chat/explore.html', context)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def manage_join_request(request):
     try:
         data = json.loads(request.body)
@@ -1577,7 +1602,7 @@ def manage_join_request(request):
         action = data.get('action')
 
         if action not in ['approve', 'reject']:
-            return JsonResponse({'success': False, 'error': 'Invalid action'})
+            return Response({'success': False, 'error': 'Invalid action'})
 
         join_request = get_object_or_404(
             GroupJoinRequest,
@@ -1588,7 +1613,7 @@ def manage_join_request(request):
 
         if action == 'approve':
             if not join_request.group.can_add_participants:
-                return JsonResponse({'success': False, 'error': 'Group is full'})
+                return Response({'success': False, 'error': 'Group is full'})
 
             join_request.group.participants.add(join_request.user)
             join_request.status = 'approved'
@@ -1606,7 +1631,7 @@ def manage_join_request(request):
         join_request.responded_by = request.user
         join_request.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'action': action,
             'username': join_request.user.full_name
@@ -1614,31 +1639,33 @@ def manage_join_request(request):
 
     except Exception as e:
         logger.error(f"Error in manage_join_request: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to manage join request'})
+        return Response({'success': False, 'error': 'Failed to manage join request'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_message_for_me(request, message_id):
     """Delete message for current user only (hide it)"""
     try:
         message = Message.objects.get(id=message_id)
         # Check if user is participant in the chat
         if not message.chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=403)
+            return Response({'status': 'error', 'message': 'Unauthorized'}, status=403)
 
         # Create deletion record for this user
         MessageDeletion.objects.get_or_create(
             message=message,
             user=request.user
         )
-        return JsonResponse({'status': 'success'})
+        return Response({'status': 'success'})
     except Message.DoesNotExist:
-        return JsonResponse({'status': 'error', 'message': 'Message not found'}, status=404)
+        return Response({'status': 'error', 'message': 'Message not found'}, status=404)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_message_for_everyone(request, message_id):
     """Delete message for everyone (only sender can do this)"""
     try:
@@ -1646,22 +1673,23 @@ def delete_message_for_everyone(request, message_id):
 
         # Check if user is the sender
         if message.sender != request.user:
-            return JsonResponse({'status': 'error', 'message': 'You can only delete your own messages'}, status=403)
+            return Response({'status': 'error', 'message': 'You can only delete your own messages'}, status=403)
 
         # Check if user is participant in the chat
         if not message.chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=403)
+            return Response({'status': 'error', 'message': 'Unauthorized'}, status=403)
 
         # Delete the message completely
         message.delete()
 
-        return JsonResponse({'status': 'success'})
+        return Response({'status': 'success'})
     except Message.DoesNotExist:
-        return JsonResponse({'status': 'error', 'message': 'Message not found'}, status=404)
+        return Response({'status': 'error', 'message': 'Message not found'}, status=404)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def consume_one_time_message(request, message_id):
     """Consume a one-time message"""
     try:
@@ -1672,14 +1700,14 @@ def consume_one_time_message(request, message_id):
         # 🔥 FIX: Only the RECIPIENT can consume the message, not the sender
         # The sender should not be able to mark their own view-once message as opened
         if message.sender == request.user:
-            return JsonResponse({
+            return Response({
                 'success': False,
                 'error': 'Sender cannot consume their own view-once message'
             })
 
         # Check if already consumed
         if message.consumed_at:
-            return JsonResponse({'success': False, 'error': 'Message already consumed'})
+            return Response({'success': False, 'error': 'Message already consumed'})
 
         # Mark as consumed
         message.consumed_at = timezone.now()
@@ -1696,7 +1724,7 @@ def consume_one_time_message(request, message_id):
                 media_url = request.build_absolute_uri(media_url)
 
         # Return response immediately with pre-built URLs
-        return JsonResponse({
+        return Response({
             'success': True,
             'content': message.content,
             'media_url': media_url,
@@ -1706,14 +1734,15 @@ def consume_one_time_message(request, message_id):
         })
 
     except Message.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Message not found or not accessible'})
+        return Response({'success': False, 'error': 'Message not found or not accessible'})
     except Exception as e:
         logger.error(f"Error consuming message: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to consume message'})
+        return Response({'success': False, 'error': 'Failed to consume message'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def mark_message_read(request, message_id):
     """Mark a message as read"""
     try:
@@ -1753,17 +1782,18 @@ def mark_message_read(request, message_id):
             except Exception as e:
                 logger.error(f"Error broadcasting read status: {e}")
 
-        return JsonResponse({'success': True})
+        return Response({'success': True})
 
     except Message.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Message not found'})
+        return Response({'success': False, 'error': 'Message not found'})
     except Exception as e:
         logger.error(f"Error marking message read: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to mark message read'})
+        return Response({'success': False, 'error': 'Failed to mark message read'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def react_to_message(request, message_id):
     """Add or remove emoji reaction to a message"""
     try:
@@ -1771,14 +1801,14 @@ def react_to_message(request, message_id):
         emoji = data.get('emoji', '').strip()
 
         if not emoji:
-            return JsonResponse({'status': 'error', 'message': 'Emoji is required'})
+            return Response({'status': 'error', 'message': 'Emoji is required'})
 
         # Get the message
         message = get_object_or_404(Message, id=message_id)
 
         # Check if user is participant in the chat
         if not message.chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'status': 'error', 'message': 'Unauthorized'})
+            return Response({'status': 'error', 'message': 'Unauthorized'})
 
         # Check if reaction already exists
         existing_reaction = MessageReaction.objects.filter(
@@ -1790,7 +1820,7 @@ def react_to_message(request, message_id):
         if existing_reaction:
             # Remove reaction
             existing_reaction.delete()
-            return JsonResponse({
+            return Response({
                 'status': 'removed',
                 'emoji': emoji,
                 'message_id': message_id
@@ -1802,7 +1832,7 @@ def react_to_message(request, message_id):
                 user=request.user,
                 emoji=emoji
             )
-            return JsonResponse({
+            return Response({
                 'status': 'added',
                 'emoji': emoji,
                 'message_id': message_id
@@ -1810,11 +1840,12 @@ def react_to_message(request, message_id):
 
     except Exception as e:
         logger.error(f"Error reacting to message: {str(e)}")
-        return JsonResponse({'status': 'error', 'message': str(e)})
+        return Response({'status': 'error', 'message': str(e)})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def update_typing_status(request, chat_id):
     """Update typing status for a chat"""
     from django.core.cache import cache
@@ -1833,14 +1864,16 @@ def update_typing_status(request, chat_id):
         # Set cache with 4 second expiry (slightly longer than 2s keep-alive to prevent flicker)
         cache.set(cache_key, typing_users, 4)
 
-        return JsonResponse({'success': True})
+        return Response({'success': True})
 
     except Exception as e:
         logger.error(f"Error updating typing status: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to update typing status'})
+        return Response({'success': False, 'error': 'Failed to update typing status'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_typing_status(request, chat_id):
     """Get current typing users for a chat"""
     from django.core.cache import cache
@@ -1860,15 +1893,16 @@ def get_typing_status(request, chat_id):
             except CustomUser.DoesNotExist:
                 pass
 
-        return JsonResponse({'typing_users': typing_users})
+        return Response({'typing_users': typing_users})
 
     except Exception as e:
         logger.error(f"Error getting typing status: {str(e)}")
-        return JsonResponse({'typing_users': []})
+        return Response({'typing_users': []})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def edit_message(request, message_id):
     """Edit a message (within 15 minute window)"""
     try:
@@ -1876,24 +1910,24 @@ def edit_message(request, message_id):
 
         # Check if user is the sender
         if message.sender != request.user:
-            return JsonResponse({'success': False, 'error': 'You can only edit your own messages'})
+            return Response({'success': False, 'error': 'You can only edit your own messages'})
 
         # Check if message can still be edited (15 minute limit)
         if not message.can_be_edited:
-            return JsonResponse({'success': False, 'error': 'Message can no longer be edited (15 minute limit exceeded)'})
+            return Response({'success': False, 'error': 'Message can no longer be edited (15 minute limit exceeded)'})
 
         # Check if it's a media-only message
         if message.message_type == 'media' and not message.content:
-            return JsonResponse({'success': False, 'error': 'Cannot edit media-only messages'})
+            return Response({'success': False, 'error': 'Cannot edit media-only messages'})
 
         data = json.loads(request.body)
         new_content = data.get('content', '').strip()
 
         if not new_content:
-            return JsonResponse({'success': False, 'error': 'Message content cannot be empty'})
+            return Response({'success': False, 'error': 'Message content cannot be empty'})
 
         if len(new_content) > 5000:
-            return JsonResponse({'success': False, 'error': 'Message too long (max 5000 characters)'})
+            return Response({'success': False, 'error': 'Message too long (max 5000 characters)'})
 
         # Store original content if first edit
         if not message.is_edited:
@@ -1905,7 +1939,7 @@ def edit_message(request, message_id):
         message.edited_at = timezone.now()
         message.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': {
                 'id': message.id,
@@ -1916,14 +1950,15 @@ def edit_message(request, message_id):
         })
 
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid JSON'})
+        return Response({'success': False, 'error': 'Invalid JSON'})
     except Exception as e:
         logger.error(f"Error editing message: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to edit message'})
+        return Response({'success': False, 'error': 'Failed to edit message'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def pin_message(request, message_id):
     """Toggle pin/unpin a message in a chat (admin only for groups, any participant for private)"""
     try:
@@ -1932,11 +1967,11 @@ def pin_message(request, message_id):
 
         # Check if user is participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'You are not a participant of this chat'})
+            return Response({'success': False, 'error': 'You are not a participant of this chat'})
 
         # For group chats, only admin can pin/unpin
         if chat.chat_type == 'group' and chat.admin != request.user:
-            return JsonResponse({'success': False, 'error': 'Only group admin can pin/unpin messages'})
+            return Response({'success': False, 'error': 'Only group admin can pin/unpin messages'})
 
         # Toggle pin status
         if message.is_pinned:
@@ -1946,7 +1981,7 @@ def pin_message(request, message_id):
             message.pinned_by = None
             message.save()
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'pinned': False,
                 'message_id': message.id
@@ -1958,7 +1993,7 @@ def pin_message(request, message_id):
             message.pinned_by = request.user
             message.save()
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'pinned': True,
                 'message_id': message.id,
@@ -1968,11 +2003,12 @@ def pin_message(request, message_id):
 
     except Exception as e:
         logger.error(f"Error toggling pin message: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle pin'})
+        return Response({'success': False, 'error': 'Failed to toggle pin'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def unpin_message(request, message_id):
     """Unpin a message in a chat"""
     try:
@@ -1981,11 +2017,11 @@ def unpin_message(request, message_id):
 
         # Check if user is participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'You are not a participant of this chat'})
+            return Response({'success': False, 'error': 'You are not a participant of this chat'})
 
         # For group chats, only admin can unpin
         if chat.chat_type == 'group' and chat.admin != request.user:
-            return JsonResponse({'success': False, 'error': 'Only group admin can unpin messages'})
+            return Response({'success': False, 'error': 'Only group admin can unpin messages'})
 
         # Unpin the message
         message.is_pinned = False
@@ -1993,7 +2029,7 @@ def unpin_message(request, message_id):
         message.pinned_by = None
         message.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': {
                 'id': message.id,
@@ -2003,10 +2039,12 @@ def unpin_message(request, message_id):
 
     except Exception as e:
         logger.error(f"Error unpinning message: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to unpin message'})
+        return Response({'success': False, 'error': 'Failed to unpin message'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_pinned_messages(request, chat_id):
     """Get all pinned messages in a chat"""
     try:
@@ -2034,7 +2072,7 @@ def get_pinned_messages(request, chat_id):
                 'has_media': msg.has_media
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'pinned_messages': messages_data,
             'count': len(messages_data)
@@ -2042,11 +2080,12 @@ def get_pinned_messages(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error getting pinned messages: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get pinned messages'})
+        return Response({'success': False, 'error': 'Failed to get pinned messages'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def pin_chat(request, chat_id):
     """Pin a chat/conversation to the top"""
     try:
@@ -2054,23 +2093,24 @@ def pin_chat(request, chat_id):
 
         # Check if already pinned
         if PinnedChat.objects.filter(user=request.user, chat=chat).exists():
-            return JsonResponse({'success': False, 'error': 'Chat is already pinned'})
+            return Response({'success': False, 'error': 'Chat is already pinned'})
 
         # Limit pinned chats to 5
         if PinnedChat.objects.filter(user=request.user).count() >= 5:
-            return JsonResponse({'success': False, 'error': 'You can only pin up to 5 chats'})
+            return Response({'success': False, 'error': 'You can only pin up to 5 chats'})
 
         PinnedChat.objects.create(user=request.user, chat=chat)
 
-        return JsonResponse({'success': True, 'message': 'Chat pinned successfully'})
+        return Response({'success': True, 'message': 'Chat pinned successfully'})
 
     except Exception as e:
         logger.error(f"Error pinning chat: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to pin chat'})
+        return Response({'success': False, 'error': 'Failed to pin chat'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def unpin_chat(request, chat_id):
     """Unpin a chat/conversation"""
     try:
@@ -2078,19 +2118,20 @@ def unpin_chat(request, chat_id):
 
         pinned = PinnedChat.objects.filter(user=request.user, chat=chat)
         if not pinned.exists():
-            return JsonResponse({'success': False, 'error': 'Chat is not pinned'})
+            return Response({'success': False, 'error': 'Chat is not pinned'})
 
         pinned.delete()
 
-        return JsonResponse({'success': True, 'message': 'Chat unpinned successfully'})
+        return Response({'success': True, 'message': 'Chat unpinned successfully'})
 
     except Exception as e:
         logger.error(f"Error unpinning chat: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to unpin chat'})
+        return Response({'success': False, 'error': 'Failed to unpin chat'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_star_message(request, message_id):
     """Toggle star/unstar a message for the current user"""
     try:
@@ -2099,7 +2140,7 @@ def toggle_star_message(request, message_id):
 
         # Verify user is participant
         if request.user not in chat.participants.all():
-            return JsonResponse({'success': False, 'error': 'Not authorized'}, status=403)
+            return Response({'success': False, 'error': 'Not authorized'}, status=403)
 
         starred, created = StarredMessage.objects.get_or_create(
             user=request.user,
@@ -2109,13 +2150,13 @@ def toggle_star_message(request, message_id):
         if not created:
             # Already starred, so unstar it
             starred.delete()
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'is_starred': False,
                 'message': 'Message unstarred'
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_starred': True,
             'message': 'Message starred'
@@ -2123,10 +2164,12 @@ def toggle_star_message(request, message_id):
 
     except Exception as e:
         logger.error(f"Error toggling star: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle star'})
+        return Response({'success': False, 'error': 'Failed to toggle star'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_starred_messages(request):
     """Get all starred messages for the current user"""
     try:
@@ -2153,7 +2196,7 @@ def get_starred_messages(request):
                 'media_url': msg.media_url
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'starred_messages': messages_data,
             'count': len(messages_data)
@@ -2161,10 +2204,12 @@ def get_starred_messages(request):
 
     except Exception as e:
         logger.error(f"Error getting starred messages: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get starred messages'})
+        return Response({'success': False, 'error': 'Failed to get starred messages'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def is_message_starred(request, message_id):
     """Check if a message is starred by current user"""
     try:
@@ -2173,14 +2218,15 @@ def is_message_starred(request, message_id):
             message_id=message_id
         ).exists()
 
-        return JsonResponse({'success': True, 'is_starred': is_starred})
+        return Response({'success': True, 'is_starred': is_starred})
 
     except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def mark_messages_read(request, chat_id):
     """Mark all messages in a chat as read by current user"""
     try:
@@ -2235,17 +2281,19 @@ def mark_messages_read(request, chat_id):
         except Exception as e:
             logger.error(f"Error broadcasting read status: {e}")
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'marked_count': len(read_receipts)
         })
 
     except Exception as e:
         logger.error(f"Error marking messages read: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to mark messages read'})
+        return Response({'success': False, 'error': 'Failed to mark messages read'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_message_read_status(request, message_id):
     """Get read receipt status for a specific message"""
     try:
@@ -2253,7 +2301,7 @@ def get_message_read_status(request, message_id):
 
         # Only sender can see read receipts
         if message.sender != request.user:
-            return JsonResponse({'success': False, 'error': 'Not authorized'}, status=403)
+            return Response({'success': False, 'error': 'Not authorized'}, status=403)
 
         read_receipts = MessageRead.objects.filter(
             message=message).select_related('user')
@@ -2271,7 +2319,7 @@ def get_message_read_status(request, message_id):
         total_recipients = message.chat.participants.exclude(
             id=request.user.id).count()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'readers': readers,
             'read_count': len(readers),
@@ -2281,10 +2329,12 @@ def get_message_read_status(request, message_id):
 
     except Exception as e:
         logger.error(f"Error getting read status: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get read status'})
+        return Response({'success': False, 'error': 'Failed to get read status'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_read_status(request, chat_id):
     """Get read status for all messages in a chat (for current user's messages)"""
     try:
@@ -2309,17 +2359,19 @@ def get_chat_read_status(request, chat_id):
                 'status': 'read' if msg.read_count >= total_recipients else ('delivered' if msg.read_count > 0 else 'sent')
             }
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'read_status': read_status
         })
 
     except Exception as e:
         logger.error(f"Error getting chat read status: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get read status'})
+        return Response({'success': False, 'error': 'Failed to get read status'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_user_online_status(request, user_id):
     """Get online status of a specific user"""
     try:
@@ -2354,7 +2406,7 @@ def get_user_online_status(request, user_id):
         else:
             last_seen_display = "Unknown"
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'user_id': user.id,
             'username': user.username,
@@ -2365,11 +2417,12 @@ def get_user_online_status(request, user_id):
 
     except Exception as e:
         logger.error(f"Error getting user online status: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get online status'})
+        return Response({'success': False, 'error': 'Failed to get online status'})
 
 
-@login_required
-@require_http_methods(["POST"])
+@api_view(["POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def user_heartbeat(request):
     """Update user's online status - heartbeat endpoint"""
     try:
@@ -2377,16 +2430,18 @@ def user_heartbeat(request):
         request.user.is_online = True
         request.user.save(update_fields=['last_seen', 'is_online'])
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'timestamp': timezone.now().isoformat()
         })
     except Exception as e:
         logger.error(f"Heartbeat error for user {request.user.id}: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Heartbeat failed'})
+        return Response({'success': False, 'error': 'Heartbeat failed'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_participant_status(request, chat_id):
     """Get online status of all participants in a chat (for private chats, returns the other user's status)"""
     try:
@@ -2437,7 +2492,7 @@ def get_chat_participant_status(request, chat_id):
                 'last_seen_display': last_seen_display
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'chat_id': chat_id,
             'chat_type': chat.chat_type,
@@ -2446,10 +2501,12 @@ def get_chat_participant_status(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error getting chat participant status: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get participant status'})
+        return Response({'success': False, 'error': 'Failed to get participant status'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_group_details(request, chat_id):
     """Get detailed information about a group chat"""
     try:
@@ -2457,7 +2514,7 @@ def get_group_details(request, chat_id):
 
         # Check if user is a participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'You are not a member of this group'}, status=403)
+            return Response({'success': False, 'error': 'You are not a member of this group'}, status=403)
 
         is_admin = chat.admin == request.user
 
@@ -2481,7 +2538,7 @@ def get_group_details(request, chat_id):
         members.sort(key=lambda x: (
             not x['is_admin'], not x['is_online'], x['full_name'].lower()))
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'group': {
                 'id': chat.id,
@@ -2501,11 +2558,12 @@ def get_group_details(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error getting group details: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get group details'})
+        return Response({'success': False, 'error': 'Failed to get group details'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def update_group_settings(request, chat_id):
     """Update group settings (admin only)"""
     try:
@@ -2513,7 +2571,7 @@ def update_group_settings(request, chat_id):
 
         # Check if user is admin
         if chat.admin != request.user:
-            return JsonResponse({'success': False, 'error': 'Only the group admin can update settings'}, status=403)
+            return Response({'success': False, 'error': 'Only the group admin can update settings'}, status=403)
 
         # Support both JSON body and multipart/form-data (for file upload)
         data = {}
@@ -2530,15 +2588,15 @@ def update_group_settings(request, chat_id):
         if 'name' in data:
             name = data['name'].strip()
             if not name:
-                return JsonResponse({'success': False, 'error': 'Group name cannot be empty'})
+                return Response({'success': False, 'error': 'Group name cannot be empty'})
             if len(name) > 100:
-                return JsonResponse({'success': False, 'error': 'Group name is too long (max 100 characters)'})
+                return Response({'success': False, 'error': 'Group name is too long (max 100 characters)'})
             chat.name = name
 
         if 'description' in data:
             description = data['description'].strip()
             if len(description) > 500:
-                return JsonResponse({'success': False, 'error': 'Description is too long (max 500 characters)'})
+                return Response({'success': False, 'error': 'Description is too long (max 500 characters)'})
             chat.description = description
 
         if 'is_public' in data:
@@ -2547,9 +2605,9 @@ def update_group_settings(request, chat_id):
         if 'max_participants' in data:
             max_participants = int(data['max_participants'])
             if max_participants < chat.participant_count:
-                return JsonResponse({'success': False, 'error': f'Cannot set max lower than current member count ({chat.participant_count})'})
+                return Response({'success': False, 'error': f'Cannot set max lower than current member count ({chat.participant_count})'})
             if max_participants < 2 or max_participants > 500:
-                return JsonResponse({'success': False, 'error': 'Max participants must be between 2 and 500'})
+                return Response({'success': False, 'error': 'Max participants must be between 2 and 500'})
             chat.max_participants = max_participants
 
         # Handle remove avatar request
@@ -2564,7 +2622,7 @@ def update_group_settings(request, chat_id):
                 chat.save()
             except Exception as e:
                 logger.error(f"Failed to remove group avatar: {str(e)}")
-                return JsonResponse({'success': False, 'error': 'Failed to remove group avatar'})
+                return Response({'success': False, 'error': 'Failed to remove group avatar'})
 
         # Handle group avatar upload (multipart/form-data)
         if request.FILES.get('group_avatar'):
@@ -2579,7 +2637,7 @@ def update_group_settings(request, chat_id):
                 chat.save()
             except Exception as e:
                 logger.error(f"Failed to save group avatar: {str(e)}")
-                return JsonResponse({'success': False, 'error': 'Failed to upload group avatar'})
+                return Response({'success': False, 'error': 'Failed to upload group avatar'})
 
         chat.save()
 
@@ -2591,7 +2649,7 @@ def update_group_settings(request, chat_id):
                 message_type='system'
             )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'Group settings updated successfully',
             'group': {
@@ -2604,14 +2662,15 @@ def update_group_settings(request, chat_id):
         })
 
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid request data'})
+        return Response({'success': False, 'error': 'Invalid request data'})
     except Exception as e:
         logger.error(f"Error updating group settings: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to update group settings'})
+        return Response({'success': False, 'error': 'Failed to update group settings'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def remove_group_member(request, chat_id):
     """Remove a member from the group (admin only)"""
     try:
@@ -2619,24 +2678,24 @@ def remove_group_member(request, chat_id):
 
         # Check if user is admin
         if chat.admin != request.user:
-            return JsonResponse({'success': False, 'error': 'Only the group admin can remove members'}, status=403)
+            return Response({'success': False, 'error': 'Only the group admin can remove members'}, status=403)
 
         data = json.loads(request.body)
         user_id = data.get('user_id')
 
         if not user_id:
-            return JsonResponse({'success': False, 'error': 'User ID is required'})
+            return Response({'success': False, 'error': 'User ID is required'})
 
         # Cannot remove yourself (admin) - use leave group instead
         if user_id == request.user.id:
-            return JsonResponse({'success': False, 'error': 'Admin cannot remove themselves. Use leave group instead.'})
+            return Response({'success': False, 'error': 'Admin cannot remove themselves. Use leave group instead.'})
 
         # Get the member to remove
         member = get_object_or_404(CustomUser, id=user_id)
 
         # Check if member is in the group
         if not chat.participants.filter(id=user_id).exists():
-            return JsonResponse({'success': False, 'error': 'User is not a member of this group'})
+            return Response({'success': False, 'error': 'User is not a member of this group'})
 
         # Remove member
         chat.participants.remove(member)
@@ -2648,21 +2707,22 @@ def remove_group_member(request, chat_id):
             message_type='system'
         )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': f'{member.full_name} has been removed from the group',
             'removed_user_id': user_id
         })
 
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid request data'})
+        return Response({'success': False, 'error': 'Invalid request data'})
     except Exception as e:
         logger.error(f"Error removing group member: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to remove member'})
+        return Response({'success': False, 'error': 'Failed to remove member'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def leave_group(request, chat_id):
     """Leave a group chat"""
     try:
@@ -2670,7 +2730,7 @@ def leave_group(request, chat_id):
 
         # Check if user is a participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'You are not a member of this group'}, status=403)
+            return Response({'success': False, 'error': 'You are not a member of this group'}, status=403)
 
         is_admin = chat.admin == request.user
 
@@ -2692,7 +2752,7 @@ def leave_group(request, chat_id):
             else:
                 # No other members, delete the group
                 chat.delete()
-                return JsonResponse({
+                return Response({
                     'success': True,
                     'message': 'You left and the group was deleted (no members remaining)',
                     'group_deleted': True
@@ -2708,7 +2768,7 @@ def leave_group(request, chat_id):
         # Remove user from participants
         chat.participants.remove(request.user)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'You have left the group',
             'group_deleted': False
@@ -2716,11 +2776,12 @@ def leave_group(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error leaving group: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to leave group'})
+        return Response({'success': False, 'error': 'Failed to leave group'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def regenerate_invite_code(request, chat_id):
     """Regenerate the group invite code (admin only)"""
     try:
@@ -2728,13 +2789,13 @@ def regenerate_invite_code(request, chat_id):
 
         # Check if user is admin
         if chat.admin != request.user:
-            return JsonResponse({'success': False, 'error': 'Only the group admin can regenerate invite code'}, status=403)
+            return Response({'success': False, 'error': 'Only the group admin can regenerate invite code'}, status=403)
 
         # Generate new invite code
         chat.invite_code = chat.generate_invite_code()
         chat.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'invite_code': chat.invite_code,
             'invite_link': chat.invite_link
@@ -2742,7 +2803,7 @@ def regenerate_invite_code(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error regenerating invite code: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to regenerate invite code'})
+        return Response({'success': False, 'error': 'Failed to regenerate invite code'})
 
 
 def get_p2p_cache():
@@ -2751,8 +2812,9 @@ def get_p2p_cache():
     return cache
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def p2p_send_signal(request):
     """Send a WebRTC signaling message to another user using database storage"""
     try:
@@ -2763,7 +2825,7 @@ def p2p_send_signal(request):
         signal_data = data.get('signal_data')
 
         if not all([chat_id, signal_data]):
-            return JsonResponse({'success': False, 'error': 'Missing required fields'})
+            return Response({'success': False, 'error': 'Missing required fields'})
 
         # Determine if this is a file transfer signal
         signal_type = signal_data.get('type', '') if isinstance(signal_data, dict) else ''
@@ -2777,7 +2839,7 @@ def p2p_send_signal(request):
         # Verify user is in the chat
         chat = get_object_or_404(Chat, id=chat_id)
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Not a participant of this chat'}, status=403)
+            return Response({'success': False, 'error': 'Not a participant of this chat'}, status=403)
 
         # Import P2PSignal model
         from chat.models import P2PSignal
@@ -2815,11 +2877,11 @@ def p2p_send_signal(request):
             # Verify target user is in the chat
             target_user = chat.participants.filter(id=target_user_id).first()
             if not target_user:
-                return JsonResponse({'success': False, 'error': 'Target user not in chat'}, status=403)
+                return Response({'success': False, 'error': 'Target user not in chat'}, status=403)
 
             # For file transfers, check if target user is online
             if is_file_signal and not target_user.is_online:
-                return JsonResponse({'success': False, 'error': 'User is offline', 'offline': True})
+                return Response({'success': False, 'error': 'User is offline', 'offline': True})
 
             # Store signal in database
             P2PSignal.objects.create(
@@ -2885,10 +2947,12 @@ def p2p_send_signal(request):
 
     except Exception as e:
         logger.error(f"Error in p2p_send_signal: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to send signal'})
+        return Response({'success': False, 'error': 'Failed to send signal'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def p2p_get_signals(request, chat_id):
     """Poll for pending WebRTC signals from database
 
@@ -2901,7 +2965,7 @@ def p2p_get_signals(request, chat_id):
 
         # Verify user is in the chat
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Not a participant of this chat'}, status=403)
+            return Response({'success': False, 'error': 'Not a participant of this chat'}, status=403)
 
         # Get signal type filter from query params
         signal_type_filter = request.GET.get(
@@ -2984,18 +3048,19 @@ def p2p_get_signals(request, chat_id):
             logger.info(
                 f"P2P signals consumed by user {request.user.id}: {len(signal_ids)} total ({len(call_signal_ids)} call signals)")
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'signals': signals_data
         })
 
     except Exception as e:
         logger.error(f"Error in p2p_get_signals: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get signals'})
+        return Response({'success': False, 'error': 'Failed to get signals'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def p2p_clear_signals(request):
     """Clear all P2P signals for a user when they go offline - frees server load"""
     try:
@@ -3018,18 +3083,19 @@ def p2p_clear_signals(request):
             logger.info(
                 f"P2P signals cleared for user {request.user.id}: {total_deleted} signals removed")
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'cleared': total_deleted
         })
 
     except Exception as e:
         logger.error(f"Error in p2p_clear_signals: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to clear signals'})
+        return Response({'success': False, 'error': 'Failed to clear signals'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def send_call_notification(request):
     """Send call notification to other participants via HTTP (fallback if WebSocket fails)"""
     try:
@@ -3038,11 +3104,11 @@ def send_call_notification(request):
         audio_only = data.get('audio_only', False)
 
         if not chat_id:
-            return JsonResponse({'success': False, 'error': 'Missing chat_id'})
+            return Response({'success': False, 'error': 'Missing chat_id'})
 
         chat = get_object_or_404(Chat, id=chat_id)
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Not a participant'}, status=403)
+            return Response({'success': False, 'error': 'Not a participant'}, status=403)
 
         # Get caller details
         caller_name = request.user.full_name
@@ -3068,14 +3134,16 @@ def send_call_notification(request):
 
         logger.info(
             f"Call notification sent via HTTP for chat {chat_id} to {others.count()} users")
-        return JsonResponse({'success': True, 'notified': others.count()})
+        return Response({'success': True, 'notified': others.count()})
 
     except Exception as e:
         logger.error(f"Error sending call notification: {e}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_participants_for_p2p(request, chat_id):
     """Get list of chat participants for P2P file sharing"""
     try:
@@ -3083,7 +3151,7 @@ def get_chat_participants_for_p2p(request, chat_id):
 
         # Verify user is in the chat
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Not a participant of this chat'}, status=403)
+            return Response({'success': False, 'error': 'Not a participant of this chat'}, status=403)
 
         # Update the requesting user's online status (heartbeat)
         request.user.last_seen = timezone.now()
@@ -3105,7 +3173,7 @@ def get_chat_participants_for_p2p(request, chat_id):
                 'is_online': is_online
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'chat_type': chat.chat_type,
             'participants': participants
@@ -3113,12 +3181,14 @@ def get_chat_participants_for_p2p(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error getting participants for P2P: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get participants'})
+        return Response({'success': False, 'error': 'Failed to get participants'})
 
 
 # ================ CHAT REQUEST SYSTEM (Instagram-style) ================
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_dm_requests(request):
     """
     Get chats that are pending acceptance (like Instagram DM requests).
@@ -3183,14 +3253,16 @@ def get_dm_requests(request):
             'timestamp': chat.updated_at.isoformat(),
         })
 
-    return JsonResponse({
+    return Response({
         'success': True,
         'requests': requests_data,
         'count': len(requests_data)
     })
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_dm_requests_count(request):
     """Get count of pending DM requests for badge"""
     user = request.user
@@ -3224,11 +3296,12 @@ def get_dm_requests_count(request):
         if other_user and chat.messages.filter(sender=other_user).exists():
             count += 1
 
-    return JsonResponse({'success': True, 'count': count})
+    return Response({'success': True, 'count': count})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def accept_dm_request(request, chat_id):
     """Accept a DM request - moves chat from Requests to All tab"""
     user = request.user
@@ -3248,11 +3321,12 @@ def accept_dm_request(request, chat_id):
         }
     )
 
-    return JsonResponse({'success': True, 'message': 'Chat accepted'})
+    return Response({'success': True, 'message': 'Chat accepted'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def decline_dm_request(request, chat_id):
     """Decline a DM request - removes the chat"""
     user = request.user
@@ -3266,10 +3340,12 @@ def decline_dm_request(request, chat_id):
     if chat.participants.count() == 0:
         chat.delete()
 
-    return JsonResponse({'success': True, 'message': 'Request declined'})
+    return Response({'success': True, 'message': 'Request declined'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def check_dm_request(request, chat_id):
     """Check if a chat is a DM request for the current user"""
     user = request.user
@@ -3279,7 +3355,7 @@ def check_dm_request(request, chat_id):
     # Check if user has accepted this chat
     is_accepted = ChatAcceptance.objects.filter(chat=chat, user=user).exists()
 
-    return JsonResponse({
+    return Response({
         'success': True,
         'is_request': not is_accepted,
         'chat_id': chat_id
@@ -3408,7 +3484,7 @@ def api_explore_feed(request):
 
             serialized_results.append(result)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'results': serialized_results,
             'page': page,
@@ -3417,4 +3493,4 @@ def api_explore_feed(request):
 
     except Exception as e:
         logger.error(f"Error in api_explore_feed: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)

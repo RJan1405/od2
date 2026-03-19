@@ -24,6 +24,10 @@ from chat.models import (
     ProfileView, PinnedChat, DismissedSuggestion, SavedScribeItem, SavedOmzoItem
 )
 from chat.forms import ScribeForm, ProfileUpdateForm
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +151,9 @@ def handle_repost_action(user, repost_type, repost_id, content=''):
     }
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def api_repost(request):
     """
     Lightweight JSON API for repost/undo repost from the (React) frontend.
@@ -166,7 +171,7 @@ def api_repost(request):
         if not repost_type or not repost_id:
             logger.warning(
                 f"Missing required fields: type={repost_type}, id={repost_id}")
-            return JsonResponse(
+            return Response(
                 {'success': False, 'error': 'type and id are required'},
                 status=400,
             )
@@ -188,13 +193,13 @@ def api_repost(request):
                 response['message'] = 'Repost removed from your profile'
 
         logger.info(f"api_repost success: {response}")
-        return JsonResponse(response)
+        return Response(response)
     except ValueError as e:
         logger.warning(f"ValueError in api_repost: {e}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        return Response({'success': False, 'error': str(e)}, status=400)
     except Exception as e:
         logger.error(f"Error in api_repost: {e}", exc_info=True)
-        return JsonResponse(
+        return Response(
             {'success': False, 'error': 'Failed to process repost'},
             status=500,
         )
@@ -212,7 +217,9 @@ def generate_scribe_hash(user_id, content, has_image):
     return content_hash
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def profile_view(request, username=None):
     if username:
         profile_user = get_object_or_404(CustomUser, username=username)
@@ -507,8 +514,9 @@ def profile_view(request, username=None):
     return render(request, 'chat/profile.html', context)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_private_chat(request):
     """Toggle whether a chat is in the user's manual 'Private' list (using PinnedChat model)"""
     try:
@@ -542,14 +550,16 @@ def toggle_private_chat(request):
         else:
             is_private = True
 
-        return JsonResponse({'success': True, 'is_private': is_private})
+        return Response({'success': True, 'is_private': is_private})
 
     except Exception as e:
         logger.error(f"Error in toggle_private_chat: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def update_profile(request):
     """Update user profile with cropped image support"""
     if request.method == 'POST':
@@ -655,8 +665,9 @@ def update_profile(request):
     return render(request, 'chat/update_profile.html', context)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def post_scribe(request):
     """Post a scribe with proper duplicate prevention and validation"""
     logger.info(f"Scribe post attempt by user {request.user.id}")
@@ -686,12 +697,12 @@ def post_scribe(request):
                 # Keep backwards-compatible shape: always at least {success: True}
                 response = {'success': True}
                 response.update(result)
-                return JsonResponse(response)
+                return Response(response)
             except ValueError as e:
-                return JsonResponse({'success': False, 'error': str(e)}, status=400)
+                return Response({'success': False, 'error': str(e)}, status=400)
             except Exception as e:
                 logger.error(f"Error creating repost: {str(e)}", exc_info=True)
-                return JsonResponse({'success': False, 'error': str(e)}, status=400)
+                return Response({'success': False, 'error': str(e)}, status=400)
 
         logger.info(
             f"Content: {content[:50]}..., Has image: {bool(image_file)}")
@@ -702,13 +713,13 @@ def post_scribe(request):
             has_code = any([(code_html and code_html.strip()), (code_css and code_css.strip(
             )), (code_js and code_js.strip()), (code_bundle and code_bundle.strip())])
             if not has_code and not content:
-                return JsonResponse({'success': False, 'error': 'Code scribe cannot be empty. Add HTML, CSS, JS, or a caption.'})
+                return Response({'success': False, 'error': 'Code scribe cannot be empty. Add HTML, CSS, JS, or a caption.'})
         else:
             if not content and not image_file:
-                return JsonResponse({'success': False, 'error': 'Scribe cannot be empty. Please add text or an image.'})
+                return Response({'success': False, 'error': 'Scribe cannot be empty. Please add text or an image.'})
 
         if content and len(content) > 280:
-            return JsonResponse({'success': False, 'error': 'Scribe must be 280 characters or less.'})
+            return Response({'success': False, 'error': 'Scribe must be 280 characters or less.'})
 
         # Duplicate prevention (only for brand new posts, not repost toggles)
         scribe_hash = generate_scribe_hash(
@@ -719,7 +730,7 @@ def post_scribe(request):
         if cache.get(cache_key):
             logger.warning(
                 f"Duplicate scribe attempt blocked for user {request.user.id}")
-            return JsonResponse({'success': False, 'error': f'Please wait {SCRIBE_COOLDOWN} seconds before posting the same scribe again.'})
+            return Response({'success': False, 'error': f'Please wait {SCRIBE_COOLDOWN} seconds before posting the same scribe again.'})
 
         # Check database for recent duplicates (last 3 minutes)
         three_minutes_ago = timezone.now() - timezone.timedelta(minutes=3)
@@ -739,7 +750,7 @@ def post_scribe(request):
         if recent_duplicate.exists():
             logger.warning(
                 f"Recent duplicate found in database for user {request.user.id}")
-            return JsonResponse({'success': False, 'error': 'You already posted this scribe recently. Please wait before posting again.'})
+            return Response({'success': False, 'error': 'You already posted this scribe recently. Please wait before posting again.'})
 
         # For code scribe posts, skip ScribeForm and construct manually
         if content_type == 'code_scribe':
@@ -760,7 +771,7 @@ def post_scribe(request):
             cache.set(cache_key, True, timeout=SCRIBE_COOLDOWN)
             logger.info(
                 f"Code Scribe {scribe.id} created successfully by user {request.user.id}")
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': 'Code scribe posted successfully!',
                 'scribe': {
@@ -835,7 +846,7 @@ def post_scribe(request):
             logger.info(
                 f"Scribe {scribe.id} created successfully by user {request.user.id}")
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': 'Scribe posted successfully!',
                 'scribe': {
@@ -862,15 +873,16 @@ def post_scribe(request):
                 for error in errors:
                     error_messages.append(f"{error}")
             logger.warning(f"Form validation failed: {error_messages}")
-            return JsonResponse({'success': False, 'error': '. '.join(error_messages)})
+            return Response({'success': False, 'error': '. '.join(error_messages)})
 
     except Exception as e:
         logger.error(f"Error in post_scribe: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': 'An unexpected error occurred. Please try again.'})
+        return Response({'success': False, 'error': 'An unexpected error occurred. Please try again.'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_like(request):
     try:
         data = json.loads(request.body)
@@ -878,12 +890,12 @@ def toggle_like(request):
             'tweet_id')  # Support both for backward compatibility
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Scribe not found'})
+            return Response({'success': False, 'error': 'Scribe not found'})
 
         # Remove dislike if exists
         Dislike.objects.filter(user=request.user, scribe=scribe).delete()
@@ -917,7 +929,7 @@ def toggle_like(request):
         like_count = Like.objects.filter(scribe=scribe).count()
         dislike_count = Dislike.objects.filter(scribe=scribe).count()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': is_liked,
             'is_disliked': False,  # Always false since we removed dislike
@@ -927,11 +939,12 @@ def toggle_like(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_like: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle like'})
+        return Response({'success': False, 'error': 'Failed to toggle like'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_dislike(request):
     """Toggle dislike on a scribe"""
     try:
@@ -940,12 +953,12 @@ def toggle_dislike(request):
             'tweet_id')  # Support both for backward compatibility
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Scribe not found'})
+            return Response({'success': False, 'error': 'Scribe not found'})
 
         # Remove like if exists
         Like.objects.filter(user=request.user, scribe=scribe).delete()
@@ -964,7 +977,7 @@ def toggle_dislike(request):
         like_count = Like.objects.filter(scribe=scribe).count()
         dislike_count = Dislike.objects.filter(scribe=scribe).count()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': False,  # Always false since we removed like
             'is_disliked': is_disliked,
@@ -974,11 +987,12 @@ def toggle_dislike(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_dislike: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle dislike'})
+        return Response({'success': False, 'error': 'Failed to toggle dislike'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_save_post(request):
     """Toggle save/bookmark a post"""
     try:
@@ -987,12 +1001,12 @@ def toggle_save_post(request):
             'tweet_id')  # Support both for backward compatibility
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Post not found'})
+            return Response({'success': False, 'error': 'Post not found'})
 
         # Toggle save
         saved_obj = SavedPost.objects.filter(
@@ -1007,7 +1021,7 @@ def toggle_save_post(request):
             is_saved = True
             message = 'Post saved'
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_saved': is_saved,
             'message': message
@@ -1015,11 +1029,12 @@ def toggle_save_post(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_save_post: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to save post'})
+        return Response({'success': False, 'error': 'Failed to save post'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_post(request):
     """Delete a user's own post"""
     try:
@@ -1028,16 +1043,16 @@ def delete_post(request):
             'tweet_id')  # Support both for backward compatibility
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Post not found'})
+            return Response({'success': False, 'error': 'Post not found'})
 
         # Only allow owner to delete
         if scribe.user != request.user:
-            return JsonResponse({'success': False, 'error': 'You can only delete your own posts'})
+            return Response({'success': False, 'error': 'You can only delete your own posts'})
 
         # Delete the image file if it exists
         if scribe.image:
@@ -1048,18 +1063,19 @@ def delete_post(request):
 
         scribe.delete()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'Post deleted successfully'
         })
 
     except Exception as e:
         logger.error(f"Error in delete_post: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to delete scribe'})
+        return Response({'success': False, 'error': 'Failed to delete scribe'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def report_post(request):
     """Report a post for inappropriate content"""
     try:
@@ -1072,33 +1088,33 @@ def report_post(request):
         copyright_type = data.get('copyright_type', '').strip()
 
         if not scribe_id or not reason:
-            return JsonResponse({'success': False, 'error': 'Scribe ID and reason are required'})
+            return Response({'success': False, 'error': 'Scribe ID and reason are required'})
 
         valid_reasons = ['spam', 'inappropriate', 'harassment',
                          'violence', 'hate_speech', 'false_info', 'copyright', 'other']
         if reason not in valid_reasons:
-            return JsonResponse({'success': False, 'error': 'Invalid report reason'})
+            return Response({'success': False, 'error': 'Invalid report reason'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Post not found'})
+            return Response({'success': False, 'error': 'Post not found'})
 
         # Can't report your own posts
         if scribe.user == request.user:
-            return JsonResponse({'success': False, 'error': 'You cannot report your own post'})
+            return Response({'success': False, 'error': 'You cannot report your own post'})
 
         # Check if already reported by this user
         existing_report = PostReport.objects.filter(
             reporter=request.user, scribe=scribe).first()
         if existing_report:
-            return JsonResponse({'success': False, 'error': 'You have already reported this post'})
+            return Response({'success': False, 'error': 'You have already reported this post'})
 
         # Validate copyright_type if reason is copyright
         if reason == 'copyright':
             valid_copyright_types = ['audio', 'content', 'both']
             if copyright_type and copyright_type not in valid_copyright_types:
-                return JsonResponse({'success': False, 'error': 'Invalid copyright type'})
+                return Response({'success': False, 'error': 'Invalid copyright type'})
 
         PostReport.objects.create(
             reporter=request.user,
@@ -1122,17 +1138,19 @@ def report_post(request):
             }
         )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'Thank you for your report. We will review it shortly.'
         })
 
     except Exception as e:
         logger.error(f"Error in report_post: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to report post'})
+        return Response({'success': False, 'error': 'Failed to report post'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_saved_posts(request):
     """Get all saved posts for the current user"""
     try:
@@ -1155,18 +1173,19 @@ def get_saved_posts(request):
                 'saved_at': saved_post.created_at.strftime('%b %d, %Y'),
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'saved_posts': posts
         })
 
     except Exception as e:
         logger.error(f"Error in get_saved_posts: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get saved posts'})
+        return Response({'success': False, 'error': 'Failed to get saved posts'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def copy_post_link(request):
     """Get the shareable link for a post"""
     try:
@@ -1175,19 +1194,19 @@ def copy_post_link(request):
             'tweet_id')  # Support both for backward compatibility
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Post not found'})
+            return Response({'success': False, 'error': 'Post not found'})
 
         # Generate the post link using the request's host
         scheme = 'https' if request.is_secure() else 'http'
         host = request.get_host()
         post_link = f"{scheme}://{host}/post/{scribe_id}/"
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'link': post_link,
             'message': 'Link copied to clipboard'
@@ -1195,11 +1214,12 @@ def copy_post_link(request):
 
     except Exception as e:
         logger.error(f"Error in copy_post_link: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get post link'})
+        return Response({'success': False, 'error': 'Failed to get post link'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def add_comment(request):
     """Add a comment to a scribe"""
     try:
@@ -1210,15 +1230,15 @@ def add_comment(request):
         parent_id = data.get('parent_id')  # For replies
 
         if not scribe_id or not content:
-            return JsonResponse({'success': False, 'error': 'Scribe ID and content are required'})
+            return Response({'success': False, 'error': 'Scribe ID and content are required'})
 
         if len(content) > 500:
-            return JsonResponse({'success': False, 'error': 'Comment too long (max 500 characters)'})
+            return Response({'success': False, 'error': 'Comment too long (max 500 characters)'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Scribe not found'})
+            return Response({'success': False, 'error': 'Scribe not found'})
 
         parent_comment = None
         if parent_id:
@@ -1226,7 +1246,7 @@ def add_comment(request):
                 parent_comment = Comment.objects.get(
                     id=parent_id, scribe=scribe)
             except Comment.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'Parent comment not found'})
+                return Response({'success': False, 'error': 'Parent comment not found'})
 
         comment = Comment.objects.create(
             scribe=scribe,
@@ -1252,7 +1272,7 @@ def add_comment(request):
                 }
             )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'comment': {
                 'id': comment.id,
@@ -1269,11 +1289,12 @@ def add_comment(request):
 
     except Exception as e:
         logger.error(f"Error in add_comment: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to add comment'})
+        return Response({'success': False, 'error': 'Failed to add comment'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_comment_like(request):
     """Toggle like on a comment"""
     try:
@@ -1281,12 +1302,12 @@ def toggle_comment_like(request):
         comment_id = data.get('comment_id')
 
         if not comment_id:
-            return JsonResponse({'success': False, 'error': 'Comment ID is required'})
+            return Response({'success': False, 'error': 'Comment ID is required'})
 
         try:
             comment = Comment.objects.get(id=comment_id)
         except Comment.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Comment not found'})
+            return Response({'success': False, 'error': 'Comment not found'})
 
         # Toggle like
         like_obj = CommentLike.objects.filter(
@@ -1299,7 +1320,7 @@ def toggle_comment_like(request):
             CommentLike.objects.create(user=request.user, comment=comment)
             is_liked = True
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': is_liked,
             'like_count': comment.like_count
@@ -1307,10 +1328,12 @@ def toggle_comment_like(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_comment_like: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle like'})
+        return Response({'success': False, 'error': 'Failed to toggle like'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_scribe(request, scribe_id):
     """Get a single scribe by ID"""
     try:
@@ -1343,14 +1366,14 @@ def get_scribe(request, scribe_id):
             'code_js': getattr(scribe, 'code_js', ''),
         }
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'scribe': scribe_data
         })
 
     except Exception as e:
         logger.error(f"Error in get_scribe: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get scribe'})
+        return Response({'success': False, 'error': 'Failed to get scribe'})
 
 
 def view_post(request, post_id):
@@ -1370,7 +1393,9 @@ def view_post(request, post_id):
         return redirect('/login/')
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_scribe_comments(request, scribe_id):
     """Get comments for a scribe"""
     try:
@@ -1422,41 +1447,42 @@ def get_scribe_comments(request, scribe_id):
 
             comments_data.append(comment_data)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'comments': comments_data
         })
 
     except Exception as e:
         logger.error(f"Error in get_scribe_comments: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to load comments'})
+        return Response({'success': False, 'error': 'Failed to load comments'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_follow(request):
     try:
         data = json.loads(request.body)
         username = data.get('username')
 
         if not username:
-            return JsonResponse({'success': False, 'error': 'Username is required'})
+            return Response({'success': False, 'error': 'Username is required'})
 
         try:
             target_user = CustomUser.objects.get(username=username)
         except CustomUser.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'User not found'})
+            return Response({'success': False, 'error': 'User not found'})
 
         if target_user == request.user:
-            return JsonResponse({'success': False, 'error': 'Cannot follow yourself'})
+            return Response({'success': False, 'error': 'Cannot follow yourself'})
 
         # Check if target user is blocked by current user
         if Block.objects.filter(blocker=request.user, blocked=target_user).exists():
-            return JsonResponse({'success': False, 'error': 'You have blocked this user'})
+            return Response({'success': False, 'error': 'You have blocked this user'})
 
         # Check if current user is blocked by target user
         if Block.objects.filter(blocker=target_user, blocked=request.user).exists():
-            return JsonResponse({'success': False, 'error': 'This user has blocked you'})
+            return Response({'success': False, 'error': 'This user has blocked you'})
 
         follow_obj = Follow.objects.filter(
             follower=request.user,
@@ -1522,7 +1548,7 @@ def toggle_follow(request):
         cache_key = f'explore_order_{request.user.id}'
         cache.delete(cache_key)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_following': is_following,
             'follow_request_status': follow_request_status,
@@ -1532,11 +1558,12 @@ def toggle_follow(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_follow: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle follow'})
+        return Response({'success': False, 'error': 'Failed to toggle follow'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def dismiss_suggestion(request):
     """Dismiss a user suggestion so they don't appear again"""
     try:
@@ -1544,15 +1571,15 @@ def dismiss_suggestion(request):
         username = data.get('username')
 
         if not username:
-            return JsonResponse({'success': False, 'error': 'Username is required'})
+            return Response({'success': False, 'error': 'Username is required'})
 
         try:
             target_user = CustomUser.objects.get(username=username)
         except CustomUser.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'User not found'})
+            return Response({'success': False, 'error': 'User not found'})
 
         if target_user == request.user:
-            return JsonResponse({'success': False, 'error': 'Cannot dismiss yourself'})
+            return Response({'success': False, 'error': 'Cannot dismiss yourself'})
 
         # Create dismissed suggestion record (or get if exists)
         DismissedSuggestion.objects.get_or_create(
@@ -1560,18 +1587,19 @@ def dismiss_suggestion(request):
             dismissed_user=target_user
         )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': f'{username} will no longer appear in suggestions'
         })
 
     except Exception as e:
         logger.error(f"Error in dismiss_suggestion: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to dismiss suggestion'})
+        return Response({'success': False, 'error': 'Failed to dismiss suggestion'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_block(request):
     """Block or unblock a user"""
     try:
@@ -1579,15 +1607,15 @@ def toggle_block(request):
         username = data.get('username')
 
         if not username:
-            return JsonResponse({'success': False, 'error': 'Username is required'})
+            return Response({'success': False, 'error': 'Username is required'})
 
         try:
             target_user = CustomUser.objects.get(username=username)
         except CustomUser.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'User not found'})
+            return Response({'success': False, 'error': 'User not found'})
 
         if target_user == request.user:
-            return JsonResponse({'success': False, 'error': 'Cannot block yourself'})
+            return Response({'success': False, 'error': 'Cannot block yourself'})
 
         # Check if already blocked
         block_obj = Block.objects.filter(
@@ -1637,7 +1665,7 @@ def toggle_block(request):
                 target=request.user
             ).delete()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_blocked': is_blocked,
             'username': username
@@ -1645,11 +1673,12 @@ def toggle_block(request):
 
     except Exception as e:
         logger.error(f"Error in toggle_block: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle block'})
+        return Response({'success': False, 'error': 'Failed to toggle block'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def manage_follow_request(request):
     """Accept or decline a follow request"""
     try:
@@ -1658,15 +1687,15 @@ def manage_follow_request(request):
         action = data.get('action')  # 'accept' or 'decline'
 
         if not username:
-            return JsonResponse({'success': False, 'error': 'Username is required'})
+            return Response({'success': False, 'error': 'Username is required'})
 
         if action not in ['accept', 'decline']:
-            return JsonResponse({'success': False, 'error': 'Invalid action'})
+            return Response({'success': False, 'error': 'Invalid action'})
 
         try:
             sender_user = CustomUser.objects.get(username=username)
         except CustomUser.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'User not found'})
+            return Response({'success': False, 'error': 'User not found'})
 
         # Find the follow request
         follow_request = FollowRequest.objects.filter(
@@ -1676,7 +1705,7 @@ def manage_follow_request(request):
         ).first()
 
         if not follow_request:
-            return JsonResponse({'success': False, 'error': 'No pending follow request found'})
+            return Response({'success': False, 'error': 'No pending follow request found'})
 
         if action == 'accept':
             # Create follow relationship
@@ -1705,7 +1734,7 @@ def manage_follow_request(request):
             follow_request.save()
             message = 'Follow request declined'
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'action': action,
             'username': username,
@@ -1714,11 +1743,12 @@ def manage_follow_request(request):
 
     except Exception as e:
         logger.error(f"Error in manage_follow_request: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to manage follow request'})
+        return Response({'success': False, 'error': 'Failed to manage follow request'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_account_privacy(request):
     """Toggle account privacy setting"""
     try:
@@ -1747,17 +1777,19 @@ def toggle_account_privacy(request):
                 follow_request.status = 'accepted'
                 follow_request.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_private': request.user.is_private
         })
 
     except Exception as e:
         logger.error(f"Error in toggle_account_privacy: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle account privacy'})
+        return Response({'success': False, 'error': 'Failed to toggle account privacy'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_follow_requests(request):
     """Get pending follow requests for the current user"""
     try:
@@ -1775,25 +1807,26 @@ def get_follow_requests(request):
                 'requested_at': req.created_at.strftime('%b %d, %Y')
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'requests': requests_data
         })
 
     except Exception as e:
         logger.error(f"Error in get_follow_requests: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get follow requests'})
+        return Response({'success': False, 'error': 'Failed to get follow requests'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def follow_states(request):
     try:
         data = json.loads(request.body)
         usernames = data.get('usernames', [])
 
         if not usernames:
-            return JsonResponse({'success': True, 'follow_states': {}})
+            return Response({'success': True, 'follow_states': {}})
 
         follow_states_dict = {}
         for username in usernames:
@@ -1862,14 +1895,14 @@ def follow_states(request):
                     'can_follow': False
                 }
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'follow_states': follow_states_dict
         })
 
     except Exception as e:
         logger.error(f"Error in follow_states: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get follow states'})
+        return Response({'success': False, 'error': 'Failed to get follow states'})
 
 
 def extract_hashtags(content):
@@ -1908,7 +1941,9 @@ def process_scribe_hashtags_mentions(scribe):
             pass  # User doesn't exist, skip
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_hashtag_scribes(request, hashtag):
     """Get all scribes with a specific hashtag"""
     try:
@@ -1918,7 +1953,7 @@ def get_hashtag_scribes(request, hashtag):
         hashtag_obj = Hashtag.objects.filter(name=hashtag_name).first()
 
         if not hashtag_obj:
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'hashtag': hashtag_name,
                 'scribes': [],
@@ -1951,7 +1986,7 @@ def get_hashtag_scribes(request, hashtag):
                 'code_js': getattr(scribe, 'code_js', ''),
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'hashtag': hashtag_name,
             'scribes': scribes_data,
@@ -1960,10 +1995,12 @@ def get_hashtag_scribes(request, hashtag):
 
     except Exception as e:
         logger.error(f"Error getting hashtag scribes: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get hashtag scribes'})
+        return Response({'success': False, 'error': 'Failed to get hashtag scribes'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_trending_hashtags(request):
     """Get trending hashtags (most used in last 24 hours)"""
     try:
@@ -1983,17 +2020,19 @@ def get_trending_hashtags(request):
                 'scribe_count': item['count']
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'trending': hashtags_data
         })
 
     except Exception as e:
         logger.error(f"Error getting trending hashtags: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get trending hashtags'})
+        return Response({'success': False, 'error': 'Failed to get trending hashtags'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_user_mentions(request):
     """Get mentions of the current user"""
     try:
@@ -2027,7 +2066,7 @@ def get_user_mentions(request):
         Mention.objects.filter(mentioned_user=request.user,
                                is_read=False).update(is_read=True)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'mentions': mentions_data,
             'count': len(mentions_data)
@@ -2035,17 +2074,19 @@ def get_user_mentions(request):
 
     except Exception as e:
         logger.error(f"Error getting user mentions: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get mentions'})
+        return Response({'success': False, 'error': 'Failed to get mentions'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def search_users_for_mention(request):
     """Search users for @mention autocomplete"""
     try:
         query = request.GET.get('q', '').strip().lower()
 
         if len(query) < 1:
-            return JsonResponse({'success': True, 'users': []})
+            return Response({'success': True, 'users': []})
 
         users = CustomUser.objects.filter(
             db_models.Q(username__icontains=query) |
@@ -2068,17 +2109,19 @@ def search_users_for_mention(request):
                 'is_following': is_following
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'users': users_data
         })
 
     except Exception as e:
         logger.error(f"Error searching users: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to search users'})
+        return Response({'success': False, 'error': 'Failed to search users'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def global_search(request):
     """Global search across Users, Groups, Scribes, and Omzo"""
     try:
@@ -2088,7 +2131,7 @@ def global_search(request):
         offset = (page - 1) * per_page
 
         if len(query) < 1:
-            return JsonResponse({'success': True, 'results': [], 'has_more': False})
+            return Response({'success': True, 'results': [], 'has_more': False})
 
         # Search QuerySets
         results = []
@@ -2207,7 +2250,7 @@ def global_search(request):
         has_more = len(combined) > (offset + per_page)
         paginated_results = combined[offset:offset + per_page]
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'results': paginated_results,
             'has_more': has_more
@@ -2215,11 +2258,12 @@ def global_search(request):
 
     except Exception as e:
         logger.error(f"Error in global search: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Search failed'})
+        return Response({'success': False, 'error': 'Search failed'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def update_theme(request):
     """Update user theme preference"""
     try:
@@ -2229,18 +2273,20 @@ def update_theme(request):
         # Validate theme
         valid_themes = [choice[0] for choice in CustomUser.THEME_CHOICES]
         if theme not in valid_themes:
-            return JsonResponse({'success': False, 'error': 'Invalid theme'})
+            return Response({'success': False, 'error': 'Invalid theme'})
 
         request.user.theme = theme
         request.user.save(update_fields=['theme'])
 
-        return JsonResponse({'success': True, 'theme': theme})
+        return Response({'success': True, 'theme': theme})
     except Exception as e:
         logger.error(f"Error updating theme: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to update theme'})
+        return Response({'success': False, 'error': 'Failed to update theme'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_all_activity(request):
     """Get all activity for the current user - likes, comments, follows, story activity"""
     try:
@@ -2523,7 +2569,7 @@ def get_all_activity(request):
             item['time_ago'] = timesince(item['timestamp']) + ' ago'
             item['timestamp'] = item['timestamp'].isoformat()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'activity_items': activity_items
         })
@@ -2532,10 +2578,12 @@ def get_all_activity(request):
         logger.error(f"Error getting all activity: {str(e)}")
         import traceback
         traceback.print_exc()
-        return JsonResponse({'success': False, 'error': 'Failed to get activity'})
+        return Response({'success': False, 'error': 'Failed to get activity'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_profile_followers(request, username):
     """Get list of followers for a user profile"""
     try:
@@ -2558,17 +2606,19 @@ def get_profile_followers(request, username):
                 ).exists() if request.user.is_authenticated else False
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'followers': followers_data
         })
 
     except Exception as e:
         logger.error(f"Error getting followers: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get followers'})
+        return Response({'success': False, 'error': 'Failed to get followers'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_profile_following(request, username):
     """Get list of users that a profile is following"""
     try:
@@ -2591,17 +2641,19 @@ def get_profile_following(request, username):
                 ).exists() if request.user.is_authenticated else False
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'following': following_data
         })
 
     except Exception as e:
         logger.error(f"Error getting following: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get following'})
+        return Response({'success': False, 'error': 'Failed to get following'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def omzo_view(request):
     """View to watch and scroll through omzo"""
     from chat.recommendations import ContentRecommender
@@ -2785,7 +2837,7 @@ def get_omzo_batch(request):
     from chat.recommendations import ContentRecommender
 
     if not request.user.is_authenticated:
-        return JsonResponse({
+        return Response({
             'success': True,
             'omzos': [],
             'next_cursor': None,
@@ -2872,7 +2924,7 @@ def get_omzo_batch(request):
         next_cursor = batch[-1].id if batch and remaining else None
         has_more = len(remaining) > 0
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'data': omzo_data,
             'next_cursor': next_cursor,
@@ -2883,7 +2935,7 @@ def get_omzo_batch(request):
 
     except Exception as e:
         logger.error(f"Error in get_omzo_batch: {str(e)}")
-        return JsonResponse({
+        return Response({
             'success': False,
             'error': 'Failed to fetch omzos',
             'omzos': [],
@@ -2891,8 +2943,9 @@ def get_omzo_batch(request):
         })
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def track_omzo_view(request):
     """API endpoint to track when a user watches a specific omzo"""
     try:
@@ -2900,26 +2953,27 @@ def track_omzo_view(request):
 
         omzo_id = data.get('omzo_id') or data.get('omzo_id')
         if not omzo_id:
-            return JsonResponse({'error': 'omzo_id required'}, status=400)
+            return Response({'error': 'omzo_id required'}, status=400)
         omzo = get_object_or_404(Omzo, id=omzo_id)
 
         # Increment view count only for this omzo
         omzo.views_count += 1
         omzo.save(update_fields=['views_count'])
 
-        return JsonResponse({
+        return Response({
             'status': 'success',
             'views': omzo.views_count
         })
     except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        return Response({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(f"Error tracking omzo view: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+        return Response({'error': str(e)}, status=500)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def upload_omzo(request):
     """API to upload a new omzo with compression"""
     # CHECK DAILY LIMIT (5 Omzo per day)
@@ -2930,7 +2984,7 @@ def upload_omzo(request):
     ).count()
 
     if today_count >= 5:
-        return JsonResponse({
+        return Response({
             'success': False,
             'error': 'Daily omzo limit reached. You can upload up to 5 Omzo per day. Try again tomorrow!'
         })
@@ -2940,7 +2994,7 @@ def upload_omzo(request):
         caption = request.POST.get('caption', '')
 
         if not video_file:
-            return JsonResponse({'success': False, 'error': 'No video provided'})
+            return Response({'success': False, 'error': 'No video provided'})
 
         # SECURITY CHECK (Magic Bytes)
         try:
@@ -2948,7 +3002,7 @@ def upload_omzo(request):
             if video_file:
                 validate_media_file(video_file)
         except ValidationError as e:
-            return JsonResponse({'success': False, 'error': str(e)})
+            return Response({'success': False, 'error': str(e)})
 
         # Use new FFmpeg compression utility
         from chat.utils import compress_video
@@ -2964,18 +3018,19 @@ def upload_omzo(request):
             caption=caption
         )
 
-        return JsonResponse({'success': True, 'message': 'Omzo uploaded successfully'})
+        return Response({'success': True, 'message': 'Omzo uploaded successfully'})
 
     except Exception as e:
         logger.error(f"Error uploading omzo: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
     except Exception as e:
         logger.error(f"Error uploading omzo: {str(e)}")
-        return JsonResponse({'success': False, 'error': f'Failed to upload omzo: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to upload omzo: {str(e)}'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_omzo_like(request):
     """API to like/unlike a omzo"""
     try:
@@ -3009,7 +3064,7 @@ def toggle_omzo_like(request):
                     }
                 )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': is_liked,
             'is_disliked': False,  # Always false since we removed dislike
@@ -3018,11 +3073,12 @@ def toggle_omzo_like(request):
         })
     except Exception as e:
         logger.error(f"Error toggling omzo like: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Action failed'})
+        return Response({'success': False, 'error': 'Action failed'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_omzo_dislike(request):
     """API to dislike/undislike a omzo"""
     try:
@@ -3042,7 +3098,7 @@ def toggle_omzo_dislike(request):
             OmzoDislike.objects.create(omzo=omzo, user=request.user)
             is_disliked = True
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': False,  # Always false since we removed like
             'is_disliked': is_disliked,
@@ -3051,10 +3107,12 @@ def toggle_omzo_dislike(request):
         })
     except Exception as e:
         logger.error(f"Error toggling omzo dislike: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Action failed'})
+        return Response({'success': False, 'error': 'Action failed'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_omzo_comments(request, omzo_id):
     """Return comments for a omzo (latest first)."""
     try:
@@ -3080,18 +3138,19 @@ def get_omzo_comments(request, omzo_id):
                 }
             })
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'total': total,
             'comments': comments,
         })
     except Exception as e:
         logger.error(f"Error getting omzo comments: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to load comments'})
+        return Response({'success': False, 'error': 'Failed to load comments'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def add_omzo_comment(request):
     """Add a comment to a omzo."""
     try:
@@ -3100,11 +3159,11 @@ def add_omzo_comment(request):
         content = (data.get('content') or '').strip()
 
         if not omzo_id:
-            return JsonResponse({'success': False, 'error': 'omzo_id required'}, status=400)
+            return Response({'success': False, 'error': 'omzo_id required'}, status=400)
         if not content:
-            return JsonResponse({'success': False, 'error': 'Comment cannot be empty'}, status=400)
+            return Response({'success': False, 'error': 'Comment cannot be empty'}, status=400)
         if len(content) > 500:
-            return JsonResponse({'success': False, 'error': 'Comment too long (max 500)'}, status=400)
+            return Response({'success': False, 'error': 'Comment too long (max 500)'}, status=400)
 
         omzo = get_object_or_404(Omzo, id=omzo_id)
         rc = OmzoComment.objects.create(
@@ -3127,7 +3186,7 @@ def add_omzo_comment(request):
                 }
             )
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'comment': {
                 'id': rc.id,
@@ -3144,14 +3203,15 @@ def add_omzo_comment(request):
             'comments_count': omzo.comment_count,
         })
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+        return Response({'success': False, 'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(f"Error adding omzo comment: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to add comment'})
+        return Response({'success': False, 'error': 'Failed to add comment'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def report_omzo(request):
     """Report a omzo for inappropriate content"""
     try:
@@ -3164,33 +3224,33 @@ def report_omzo(request):
         disable_audio = data.get('disable_audio', False)
 
         if not omzo_id or not reason:
-            return JsonResponse({'success': False, 'error': 'Omzo ID and reason are required'})
+            return Response({'success': False, 'error': 'Omzo ID and reason are required'})
 
         valid_reasons = ['spam', 'inappropriate', 'harassment',
                          'violence', 'hate_speech', 'false_info', 'copyright', 'other']
         if reason not in valid_reasons:
-            return JsonResponse({'success': False, 'error': 'Invalid report reason'})
+            return Response({'success': False, 'error': 'Invalid report reason'})
 
         try:
             omzo = Omzo.objects.get(id=omzo_id)
         except Omzo.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Omzo not found'})
+            return Response({'success': False, 'error': 'Omzo not found'})
 
         # Can't report your own Omzo
         if omzo.user == request.user:
-            return JsonResponse({'success': False, 'error': 'You cannot report your own Omzo'})
+            return Response({'success': False, 'error': 'You cannot report your own Omzo'})
 
         # Check if already reported by this user
         existing_report = OmzoReport.objects.filter(
             reporter=request.user, omzo=omzo).first()
         if existing_report:
-            return JsonResponse({'success': False, 'error': 'You have already reported this Omzo'})
+            return Response({'success': False, 'error': 'You have already reported this Omzo'})
 
         # Validate copyright_type if reason is copyright
         if reason == 'copyright':
             valid_copyright_types = ['audio', 'content', 'both']
             if copyright_type and copyright_type not in valid_copyright_types:
-                return JsonResponse({'success': False, 'error': 'Invalid copyright type'})
+                return Response({'success': False, 'error': 'Invalid copyright type'})
 
         # Create the report
         report = OmzoReport.objects.create(
@@ -3221,18 +3281,19 @@ def report_omzo(request):
             omzo.is_muted = True
             omzo.save()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'Thank you for your report. We will review it shortly.'
         })
 
     except Exception as e:
         logger.error(f"Error in report_omzo: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to report omzo'})
+        return Response({'success': False, 'error': 'Failed to report omzo'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_save_scribe(request):
     """Toggle save status for a scribe"""
     try:
@@ -3240,12 +3301,12 @@ def toggle_save_scribe(request):
         scribe_id = data.get('scribe_id')
 
         if not scribe_id:
-            return JsonResponse({'success': False, 'error': 'Scribe ID is required'})
+            return Response({'success': False, 'error': 'Scribe ID is required'})
 
         try:
             scribe = Scribe.objects.get(id=scribe_id)
         except Scribe.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Scribe not found'})
+            return Response({'success': False, 'error': 'Scribe not found'})
 
         from chat.models import SavedScribeItem
         saved_obj = SavedScribeItem.objects.filter(
@@ -3258,18 +3319,19 @@ def toggle_save_scribe(request):
             SavedScribeItem.objects.create(user=request.user, scribe=scribe)
             is_saved = True
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_saved': is_saved
         })
 
     except Exception as e:
         logger.error(f"Error in toggle_save_scribe: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle save'})
+        return Response({'success': False, 'error': 'Failed to toggle save'})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_save_omzo(request):
     """Toggle save status for an omzo"""
     try:
@@ -3277,12 +3339,12 @@ def toggle_save_omzo(request):
         omzo_id = data.get('omzo_id')
 
         if not omzo_id:
-            return JsonResponse({'success': False, 'error': 'Omzo ID is required'})
+            return Response({'success': False, 'error': 'Omzo ID is required'})
 
         try:
             omzo = Omzo.objects.get(id=omzo_id)
         except Omzo.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'Omzo not found'})
+            return Response({'success': False, 'error': 'Omzo not found'})
 
         from chat.models import SavedOmzoItem
         saved_obj = SavedOmzoItem.objects.filter(
@@ -3295,17 +3357,19 @@ def toggle_save_omzo(request):
             SavedOmzoItem.objects.create(user=request.user, omzo=omzo)
             is_saved = True
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_saved': is_saved
         })
 
     except Exception as e:
         logger.error(f"Error in toggle_save_omzo: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to toggle save'})
+        return Response({'success': False, 'error': 'Failed to toggle save'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_saved_items(request):
     """Get all saved items (scribes and omzos) for the current user"""
     try:
@@ -3391,7 +3455,7 @@ def get_saved_items(request):
         all_saved = scribes_data + omzos_data
         all_saved.sort(key=lambda x: x['saved_at'], reverse=True)
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'saved_items': all_saved,
             'count': len(all_saved)
@@ -3399,4 +3463,4 @@ def get_saved_items(request):
 
     except Exception as e:
         logger.error(f"Error in get_saved_items: {str(e)}")
-        return JsonResponse({'success': False, 'error': f'Failed to fetch saved items: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to fetch saved items: {str(e)}'})

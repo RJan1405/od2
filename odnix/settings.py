@@ -13,6 +13,7 @@ DEBUG = True
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
 
 # FIXED: Site domain for clean invite links
+# SITE_DOMAIN = 'http://192.168.104.187:8000'
 SITE_DOMAIN = 'http://192.168.104.187:8000'
 
 # CORS settings for React frontend
@@ -73,7 +74,6 @@ INSTALLED_APPS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
     ],
 }
 

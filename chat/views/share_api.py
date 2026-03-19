@@ -7,13 +7,19 @@ from django.utils import timezone
 import json
 import logging
 
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from chat.models import (
     CustomUser, Chat, Message, Scribe, Omzo, Story, ChatRequest, ChatAcceptance
 )
 
 logger = logging.getLogger(__name__)
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def search_users_for_share(request):
     """
     Search users for sharing content.
@@ -94,14 +100,15 @@ def search_users_for_share(request):
             'is_private': user.is_private
         })
         
-    return JsonResponse({
+    return Response({
         'success': True,
         'results': data,
         'has_more': len(data) == per_page
     })
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def share_content_to_user(request):
     """
     Share content to a list of users.
@@ -119,7 +126,7 @@ def share_content_to_user(request):
         message_text = data.get('message', '').strip()
         
         if not recipient_ids or not content_type or not content_id:
-            return JsonResponse({'success': False, 'error': 'Missing required fields'})
+            return Response({'success': False, 'error': 'Missing required fields'})
             
         # Get content object
         content_obj = None
@@ -130,7 +137,7 @@ def share_content_to_user(request):
         elif content_type == 'story':
             content_obj = get_object_or_404(Story, id=content_id)
         else:
-             return JsonResponse({'success': False, 'error': 'Invalid content type'})
+             return Response({'success': False, 'error': 'Invalid content type'})
 
         results = {
             'sent': 0,
@@ -200,13 +207,15 @@ def share_content_to_user(request):
                 results['failed'] += 1
                 results['details'].append({'id': user_id, 'status': 'error'})
                 
-        return JsonResponse({'success': True, 'results': results})
+        return Response({'success': True, 'results': results})
         
     except Exception as e:
         logger.error(f"Share API Error: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_requests(request):
     """Get pending chat requests received by current user"""
     requests = ChatRequest.objects.filter(
@@ -230,43 +239,47 @@ def get_chat_requests(request):
             'time_ago': req.created_at  # Can use humanize on client or server
         })
         
-    return JsonResponse({'success': True, 'requests': data})
+    return Response({'success': True, 'requests': data})
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chat_requests_count(request):
     """Get count of pending requests for badge"""
     count = ChatRequest.objects.filter(
         recipient=request.user,
         status='pending'
     ).count()
-    return JsonResponse({'success': True, 'count': count})
+    return Response({'success': True, 'count': count})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def accept_chat_request(request, request_id):
     """Accept a chat request"""
     chat_request = get_object_or_404(ChatRequest, id=request_id, recipient=request.user)
     
     try:
         chat = chat_request.accept()
-        return JsonResponse({
+        return Response({
             'success': True, 
             'chat_id': chat.id,
             'message': 'Request accepted'
         })
     except Exception as e:
         logger.error(f"Error accepting request: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def decline_chat_request(request, request_id):
     """Decline a chat request"""
     chat_request = get_object_or_404(ChatRequest, id=request_id, recipient=request.user)
     
     try:
         chat_request.decline()
-        return JsonResponse({'success': True, 'message': 'Request declined'})
+        return Response({'success': True, 'message': 'Request declined'})
     except Exception as e:
          logger.error(f"Error declining request: {str(e)}")
-         return JsonResponse({'success': False, 'error': str(e)})
+         return Response({'success': False, 'error': str(e)})

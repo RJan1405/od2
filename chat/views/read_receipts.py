@@ -12,12 +12,17 @@ from asgiref.sync import async_to_sync
 from chat.models import Chat, Message, MessageRead
 import json
 import logging
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def mark_messages_read(request):
     """
     Mark multiple messages as read for the current user.
@@ -37,7 +42,7 @@ def mark_messages_read(request):
         message_ids = data.get('message_ids')  # Optional: specific messages
 
         if not chat_id:
-            return JsonResponse({'success': False, 'error': 'chat_id required'}, status=400)
+            return Response({'success': False, 'error': 'chat_id required'}, status=400)
 
         # Verify user is participant in chat
         chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
@@ -99,7 +104,7 @@ def mark_messages_read(request):
             read_receipts__user=request.user
         ).count()
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'marked_count': len(marked_messages),
             'unread_count': remaining_unread,
@@ -107,15 +112,17 @@ def mark_messages_read(request):
         })
 
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+        return Response({'success': False, 'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(
             f"Error marking messages as read: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
 
 
-@login_required
 @require_GET
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_unread_counts(request):
     """
     Get unread message counts for all chats the user participates in.
@@ -142,7 +149,7 @@ def get_unread_counts(request):
             counts[str(chat.id)] = unread_count
             total_unread += unread_count
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'counts': counts,
             'total_unread': total_unread
@@ -150,11 +157,12 @@ def get_unread_counts(request):
 
     except Exception as e:
         logger.error(f"Error getting unread counts: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def mark_chat_read(request, chat_id):
     """
     Mark all messages in a chat as read for the current user.
@@ -209,7 +217,7 @@ def mark_chat_read(request, chat_id):
             logger.info(
                 f"User {request.user.id} marked entire chat {chat_id} as read ({len(marked_messages)} messages)")
 
-        return JsonResponse({
+        return Response({
             'success': True,
             'marked_count': len(marked_messages),
             'unread_count': 0
@@ -217,4 +225,4 @@ def mark_chat_read(request, chat_id):
 
     except Exception as e:
         logger.error(f"Error marking chat as read: {str(e)}", exc_info=True)
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)

@@ -8,6 +8,10 @@ from django.core.mail import send_mail
 import logging
 from chat.models import CustomUser, EmailVerificationToken
 from chat.forms import CustomUserCreationForm
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -184,7 +188,9 @@ def verify_email(request, token):
     messages.error(request, 'Invalid verification link.')
     return redirect('login')
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def logout_view(request):
     request.user.mark_offline()
     logout(request)

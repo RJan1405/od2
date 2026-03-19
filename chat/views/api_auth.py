@@ -1,41 +1,46 @@
-from django.contrib.auth import login, logout, authenticate
-from django.http import JsonResponse
-from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
-from django.views.decorators.http import require_http_methods
-import json
-
-from ..models import CustomUser
+from django.contrib.auth import authenticate
 from django.db import transaction
-@csrf_exempt
-@require_http_methods(["POST"])
+from ..models import CustomUser
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.authtoken.models import Token
+from rest_framework.response import Response
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def api_login(request):
     """API endpoint for React frontend login"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
         password = data.get('password')
 
         if not username or not password:
-            return JsonResponse({
+            return Response({
                 'success': False,
                 'error': 'Username and password are required'
             }, status=400)
 
-        user = authenticate(request, username=username, password=password)
+        user = authenticate(username=username, password=password)
 
         if user is not None:
-            login(request, user)
             user.mark_online()
 
             # Get or create a DRF token for WebSocket authentication (mobile clients)
             try:
-                from rest_framework.authtoken.models import Token
                 token_obj, _ = Token.objects.get_or_create(user=user)
                 auth_token = token_obj.key
             except Exception:
                 auth_token = None
 
-            return JsonResponse({
+            if not auth_token:
+                return Response({
+                    'success': False,
+                    'error': 'Token generation failed'
+                }, status=500)
+
+            return Response({
                 'success': True,
                 'auth_token': auth_token,  # Used by mobile for WS auth via ?token=xxx
                 'user': {
@@ -60,38 +65,34 @@ def api_login(request):
                 }
             })
         else:
-            return JsonResponse({
+            return Response({
                 'success': False,
                 'error': 'Invalid username or password'
             }, status=401)
 
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Invalid JSON data'
-        }, status=400)
     except Exception as e:
-        return JsonResponse({
+        return Response({
             'success': False,
             'error': str(e)
         }, status=500)
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
+@api_view(["POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def api_logout(request):
     """API endpoint for React frontend logout"""
     if request.user.is_authenticated:
         request.user.mark_offline()
-        logout(request)
-    return JsonResponse({'success': True})
+        Token.objects.filter(user=request.user).delete()
+    return Response({'success': True}, status=200)
 
-@csrf_exempt
-@require_http_methods(["POST"])
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def api_register(request):
     """API endpoint for user registration (mobile/frontend)"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
         email = data.get('email')
         password = data.get('password')
@@ -99,16 +100,16 @@ def api_register(request):
         lastname = data.get('lastname', '')
         
         if not username or not email or not password:
-            return JsonResponse({
+            return Response({
                 'success': False,
                 'error': 'Username, email, and password are required'
             }, status=400)
             
         if CustomUser.objects.filter(username=username).exists():
-            return JsonResponse({'success': False, 'error': 'Username already exists'}, status=400)
+            return Response({'success': False, 'error': 'Username already exists'}, status=400)
             
         if CustomUser.objects.filter(email=email).exists():
-            return JsonResponse({'success': False, 'error': 'Email already exists'}, status=400)
+            return Response({'success': False, 'error': 'Email already exists'}, status=400)
             
         with transaction.atomic():
             user = CustomUser(
@@ -121,20 +122,24 @@ def api_register(request):
             user.set_password(password)
             user.save()
             
-            # Log the user in immediately
-            user = authenticate(request, username=username, password=password)
+            # Return token directly
+            user = authenticate(username=username, password=password)
             if user is not None:
-                login(request, user)
                 user.mark_online()
                 
                 try:
-                    from rest_framework.authtoken.models import Token
                     token_obj, _ = Token.objects.get_or_create(user=user)
                     auth_token = token_obj.key
                 except Exception:
                     auth_token = None
                     
-                return JsonResponse({
+                if not auth_token:
+                    return Response({
+                        'success': False,
+                        'error': 'Token generation failed'
+                    }, status=500)
+                    
+                return Response({
                     'success': True,
                     'auth_token': auth_token,
                     'user': {
@@ -152,25 +157,24 @@ def api_register(request):
                     }
                 })
             else:
-                return JsonResponse({
+                return Response({
                     'success': False,
                     'error': 'Failed to authenticate after registration'
                 }, status=500)
                 
-    except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid JSON data'}, status=400)
     except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
 
 
-@require_http_methods(["GET", "POST"])
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+
+@api_view(["GET", "POST"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def api_profile(request):
     """API endpoint to get or update current user profile"""
-    if not request.user.is_authenticated:
-        return JsonResponse({
-            'error': 'Not authenticated'
-        }, status=401)
-
     user = request.user
 
     if request.method == 'POST':
@@ -232,13 +236,13 @@ def api_profile(request):
 
             user.save()
 
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'user': user_data,
                 'data': user_data
-            })
+            }, status=200)
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+            return Response({'success': False, 'error': str(e)}, status=500)
 
     user_response = {
         'id': user.id,
@@ -261,21 +265,20 @@ def api_profile(request):
         'post_count': user.scribes.count(),
     }
 
-    return JsonResponse({
+    return Response({
         'success': True,
         'user': user_response,
         'data': user_response
-    })
+    }, status=200)
 
-
-@ensure_csrf_cookie
-@require_http_methods(["GET"])
+# Deprecated: Not used in token-based auth
 def get_csrf_token(request):
-    """Get CSRF token for API requests"""
-    return JsonResponse({'success': True})
+    return Response({'success': True}, status=200)
 
 
-@require_http_methods(["GET"])
+@api_view(["GET"])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def api_user_profile(request, username):
     """API endpoint to get user profile by username"""
     from django.shortcuts import get_object_or_404
@@ -283,10 +286,6 @@ def api_user_profile(request, username):
 
     # Get the user by username or 'me' for current user
     if username == 'me':
-        if not request.user.is_authenticated:
-            return JsonResponse({
-                'error': 'Not authenticated'
-            }, status=401)
         user = request.user
     else:
         user = get_object_or_404(CustomUser, username=username)
@@ -469,7 +468,7 @@ def api_user_profile(request, username):
             'is_reposted': is_reposted,
         })
 
-    return JsonResponse({
+    return Response({
         'success': True,
         'user': {
             'id': user.id,
@@ -495,4 +494,4 @@ def api_user_profile(request, username):
         'scribes': scribes_data,
         'reposts': reposts_data,
         'omzos': omzos_data
-    })
+    }, status=200)

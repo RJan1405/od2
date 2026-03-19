@@ -8,12 +8,17 @@ import json
 import os
 import logging
 from chat.models import CustomUser, Story, StoryView, StoryLike, StoryReply, Chat, Message
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def repost_story(request):
     """
     Repost someone else's story to your own story (Instagram-style).
@@ -24,7 +29,7 @@ def repost_story(request):
         original_story_id = data.get('story_id')
         
         if not original_story_id:
-            return JsonResponse({'success': False, 'error': 'Story ID is required'})
+            return Response({'success': False, 'error': 'Story ID is required'})
         
         # Get the original story (could itself be a repost)
         original_story = get_object_or_404(
@@ -39,7 +44,7 @@ def repost_story(request):
         
         # Can't repost your own story
         if root_story.user == request.user:
-            return JsonResponse({'success': False, 'error': "You can't repost your own story"})
+            return Response({'success': False, 'error': "You can't repost your own story"})
         
         # Check if user already reposted this root story (prevent duplicates / repost-of-repost)
         existing_repost = Story.objects.filter(
@@ -50,7 +55,7 @@ def repost_story(request):
         ).exists()
         
         if existing_repost:
-            return JsonResponse({'success': False, 'error': 'You already reposted this story'})
+            return Response({'success': False, 'error': 'You already reposted this story'})
         
         # Create a new story that references the root/original story
         # The repost inherits the original's media but adds "Reposted from @username" context
@@ -101,7 +106,7 @@ def repost_story(request):
             from chat.views.chat import broadcast_message_to_chat
             broadcast_message_to_chat(chat, message, exclude_sender=True)
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'message': 'Story reposted successfully!',
             'story': {
@@ -122,14 +127,15 @@ def repost_story(request):
         })
         
     except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'error': 'Invalid JSON data'})
+        return Response({'success': False, 'error': 'Invalid JSON data'})
     except Exception as e:
         logger.error(f"Error reposting story: {e}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def create_story(request):
     """FIXED - Create a new story - NOW SUPPORTS MULTIPLE STORIES PER USER AND IMAGE+TEXT COMBO"""
     try:
@@ -161,11 +167,11 @@ def create_story(request):
             elif file_extension in ['.mp4', '.mov', '.avi', '.mkv', '.webm']:
                 story_type = 'video'
             else:
-                return JsonResponse({'success': False, 'error': 'Invalid file type. Supported: jpg, png, gif, webp, mp4, mov, avi, mkv, webm'})
+                return Response({'success': False, 'error': 'Invalid file type. Supported: jpg, png, gif, webp, mp4, mov, avi, mkv, webm'})
         
         # Validation - need either content or media
         if not content and not media_file:
-            return JsonResponse({'success': False, 'error': 'Please add text or an image'})
+            return Response({'success': False, 'error': 'Please add text or an image'})
         
         # Compress video if applicable
         if media_file and story_type == 'video':
@@ -197,7 +203,7 @@ def create_story(request):
         
         logger.info(f"Story created successfully: {story.id}")
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'story': {
                 'id': story.id,
@@ -214,9 +220,11 @@ def create_story(request):
         
     except Exception as e:
         logger.error(f"Error creating story: {e}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def view_story(request, story_id):
     """View a specific story"""
     try:
@@ -246,7 +254,7 @@ def view_story(request, story_id):
                 'is_expired': original.is_expired,
             }
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'story': {
                 'id': story.id,
@@ -277,10 +285,12 @@ def view_story(request, story_id):
         
     except Exception as e:
         logger.error(f"Error viewing story: {e}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 # NEW: API endpoint to get all stories for a user (for multiple story viewing)
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_user_stories(request, username):
     """Get all active stories for a specific user"""
     try:
@@ -343,19 +353,19 @@ def get_user_stories(request, username):
                 'is_repost': story.shared_from_story is not None,
             })
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'stories': stories_data
         })
         
     except Exception as e:
         logger.error(f"Error getting user stories: {e}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
 def get_following_stories(request):
     """Get stories from all users that the current user follows (Instagram-style feed)"""
     if not request.user.is_authenticated:
-        return JsonResponse({'success': True, 'users': []})
+        return Response({'success': True, 'users': []})
     
     try:
         from chat.models import Follow
@@ -460,7 +470,7 @@ def get_following_stories(request):
         # Sort: own stories first, then unviewed, then viewed
         stories_feed.sort(key=lambda x: (not x.get('is_own', False), not x.get('has_unviewed', False)))
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'users_with_stories': stories_feed,
             'total_users': len(stories_feed)
@@ -468,10 +478,11 @@ def get_following_stories(request):
         
     except Exception as e:
         logger.error(f"Error getting following stories: {e}")
-        return JsonResponse({'success': False, 'error': str(e)})
+        return Response({'success': False, 'error': str(e)})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def mark_story_viewed(request):
     """Mark a story as viewed by the current user"""
     try:
@@ -479,7 +490,7 @@ def mark_story_viewed(request):
         story_id = data.get('story_id')
         
         if not story_id:
-            return JsonResponse({'success': False, 'error': 'Story ID is required'})
+            return Response({'success': False, 'error': 'Story ID is required'})
         
         story = get_object_or_404(Story, id=story_id)
         
@@ -495,17 +506,18 @@ def mark_story_viewed(request):
             view.viewed_at = timezone.now()
             view.save()
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'view_count': story.view_count
         })
         
     except Exception as e:
         logger.error(f"Error in mark_story_viewed: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to mark story as viewed'})
+        return Response({'success': False, 'error': 'Failed to mark story as viewed'})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def toggle_story_like(request):
     """Toggle like on a story"""
     try:
@@ -513,7 +525,7 @@ def toggle_story_like(request):
         story_id = data.get('story_id')
         
         if not story_id:
-            return JsonResponse({'success': False, 'error': 'Story ID is required'})
+            return Response({'success': False, 'error': 'Story ID is required'})
         
         story = get_object_or_404(Story, id=story_id)
         
@@ -568,7 +580,7 @@ def toggle_story_like(request):
         
         like_count = story.like_count
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'is_liked': is_liked,
             'like_count': like_count
@@ -577,10 +589,11 @@ def toggle_story_like(request):
     except Exception as e:
         logger.error(f"Error in toggle_story_like: {str(e)}")
         print(f"DEBUG ERROR in toggle_story_like: {str(e)}") # Force print to console
-        return JsonResponse({'success': False, 'error': f'Failed to toggle story like: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to toggle story like: {str(e)}'})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def add_story_reply(request):
     """Add a reply to a story (only visible to story poster)"""
     try:
@@ -589,13 +602,13 @@ def add_story_reply(request):
         content = data.get('content', '').strip()
         
         if not story_id:
-            return JsonResponse({'success': False, 'error': 'Story ID is required'})
+            return Response({'success': False, 'error': 'Story ID is required'})
         
         if not content:
-            return JsonResponse({'success': False, 'error': 'Reply content is required'})
+            return Response({'success': False, 'error': 'Reply content is required'})
         
         if len(content) > 500:
-            return JsonResponse({'success': False, 'error': 'Reply content too long (max 500 characters)'})
+            return Response({'success': False, 'error': 'Reply content too long (max 500 characters)'})
         
         story = get_object_or_404(Story, id=story_id)
         
@@ -670,14 +683,14 @@ def add_story_reply(request):
                 # Log error but don't fail the reply creation
                 logger.error(f"Failed to send chat message for reply: {e}")
                 # Return the error to the frontend so we know what happened
-                return JsonResponse({
+                return Response({
                     'success': True,
                     'reply_id': reply.id,
                     'reply_count': story.reply_count,
                     'message_error': str(e)  # Pass the error back
                 })
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'reply_id': reply.id,
             'reply_count': story.reply_count
@@ -686,9 +699,11 @@ def add_story_reply(request):
     except Exception as e:
         logger.error(f"Error in add_story_reply: {str(e)}")
         print(f"DEBUG ERROR in add_story_reply: {str(e)}")
-        return JsonResponse({'success': False, 'error': f'Failed to add story reply: {str(e)}'})
+        return Response({'success': False, 'error': f'Failed to add story reply: {str(e)}'})
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_story_replies(request, story_id):
     """Get replies for a story (for story poster or reply author)"""
     try:
@@ -696,7 +711,7 @@ def get_story_replies(request, story_id):
         
         # Allow story poster OR users who have replied to see replies
         if story.user != request.user and not story.story_replies.filter(replier=request.user).exists():
-            return JsonResponse({'success': False, 'error': 'Unauthorized'})
+            return Response({'success': False, 'error': 'Unauthorized'})
         
         replies = story.story_replies.select_related('replier').order_by('created_at')
         
@@ -716,16 +731,18 @@ def get_story_replies(request, story_id):
             })        # Mark replies as read
         story.story_replies.filter(is_read=False).update(is_read=True)
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'replies': replies_data
         })
         
     except Exception as e:
         logger.error(f"Error in get_story_replies: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get story replies'})
+        return Response({'success': False, 'error': 'Failed to get story replies'})
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_story_viewers(request, story_id):
     """Get viewers for a story (only for story poster)"""
     try:
@@ -733,7 +750,7 @@ def get_story_viewers(request, story_id):
         
         # Only story poster can see viewers
         if story.user != request.user:
-            return JsonResponse({'success': False, 'error': 'Unauthorized'})
+            return Response({'success': False, 'error': 'Unauthorized'})
         
         viewers = story.story_views.select_related('viewer').order_by('-viewed_at')
         
@@ -747,7 +764,7 @@ def get_story_viewers(request, story_id):
                 'viewed_at': view.viewed_at.isoformat()
             })
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'viewers': viewers_data,
             'view_count': len(viewers_data)
@@ -755,10 +772,11 @@ def get_story_viewers(request, story_id):
         
     except Exception as e:
         logger.error(f"Error in get_story_viewers: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get story viewers'})
+        return Response({'success': False, 'error': 'Failed to get story viewers'})
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def delete_reply(request, reply_id):
     """Delete a story reply (only by reply author)"""
     try:
@@ -766,18 +784,20 @@ def delete_reply(request, reply_id):
         
         # Only reply author or story owner can delete
         if reply.replier != request.user and reply.story.user != request.user:
-            return JsonResponse({'success': False, 'error': 'Unauthorized'})
+            return Response({'success': False, 'error': 'Unauthorized'})
         
         reply.delete()
         
-        return JsonResponse({'success': True})
+        return Response({'success': True})
         
     except Exception as e:
         logger.error(f"Error in delete_reply: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to delete reply'})
+        return Response({'success': False, 'error': 'Failed to delete reply'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_story_inbox(request):
     """Get all replies to the current user's stories - Story Inbox"""
     try:
@@ -817,17 +837,19 @@ def get_story_inbox(request):
         # Mark all as read after fetching
         replies.filter(is_read=False).update(is_read=True)
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'replies': replies_data
         })
         
     except Exception as e:
         logger.error(f"Error in get_story_inbox: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get story inbox'})
+        return Response({'success': False, 'error': 'Failed to get story inbox'})
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_story_inbox_count(request):
     """Get the count of unread story replies"""
     try:
@@ -836,11 +858,11 @@ def get_story_inbox_count(request):
             is_read=False
         ).count()
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'unread_count': unread_count
         })
         
     except Exception as e:
         logger.error(f"Error in get_story_inbox_count: {str(e)}")
-        return JsonResponse({'success': False, 'error': 'Failed to get count'})
+        return Response({'success': False, 'error': 'Failed to get count'})

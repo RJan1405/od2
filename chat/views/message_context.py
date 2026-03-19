@@ -9,11 +9,17 @@ import json
 import logging
 
 from chat.models import Message, StarredMessage, MessageDeletion, MessageRead
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 
 logger = logging.getLogger(__name__)
 
 
-@login_required
+@api_view(['GET', 'POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_message_context_menu(request, message_id):
     """Get context menu options for a specific message"""
     try:
@@ -22,7 +28,7 @@ def get_message_context_menu(request, message_id):
         
         # Verify user is a participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Unauthorized'}, status=403)
+            return Response({'success': False, 'error': 'Unauthorized'}, status=403)
         
         is_own = message.sender == request.user
         is_starred = StarredMessage.objects.filter(user=request.user, message=message).exists()
@@ -129,18 +135,19 @@ def get_message_context_menu(request, message_id):
                 'divider': True
             })
         
-        return JsonResponse({
+        return Response({
             'success': True,
             'options': options
         })
         
     except Exception as e:
         logger.error(f"Error in get_message_context_menu: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
 
 
-@login_required
-@require_POST
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def message_context_action(request):
     """Handle context menu actions on messages"""
     try:
@@ -149,39 +156,39 @@ def message_context_action(request):
         action = data.get('action')
         
         if not message_id or not action:
-            return JsonResponse({'success': False, 'error': 'Missing required fields'})
+            return Response({'success': False, 'error': 'Missing required fields'})
         
         message = get_object_or_404(Message, id=message_id)
         chat = message.chat
         
         # Verify user is a participant
         if not chat.participants.filter(id=request.user.id).exists():
-            return JsonResponse({'success': False, 'error': 'Unauthorized'}, status=403)
+            return Response({'success': False, 'error': 'Unauthorized'}, status=403)
         
         is_own = message.sender == request.user
         
         # Handle different actions
         if action == 'star':
             StarredMessage.objects.get_or_create(user=request.user, message=message)
-            return JsonResponse({'success': True, 'message': 'Message starred'})
+            return Response({'success': True, 'message': 'Message starred'})
         
         elif action == 'unstar':
             StarredMessage.objects.filter(user=request.user, message=message).delete()
-            return JsonResponse({'success': True, 'message': 'Message unstarred'})
+            return Response({'success': True, 'message': 'Message unstarred'})
         
         elif action == 'copy':
             # Frontend handles the actual copying
-            return JsonResponse({'success': True, 'content': message.content})
+            return Response({'success': True, 'content': message.content})
         
         elif action == 'delete_me':
             # Delete for current user only
             MessageDeletion.objects.get_or_create(message=message, user=request.user)
-            return JsonResponse({'success': True, 'message': 'Message deleted for you'})
+            return Response({'success': True, 'message': 'Message deleted for you'})
         
         elif action == 'delete_everyone':
             # Only owner can delete for everyone
             if not is_own:
-                return JsonResponse({'success': False, 'error': 'Unauthorized'}, status=403)
+                return Response({'success': False, 'error': 'Unauthorized'}, status=403)
             
             # Mark message as deleted for everyone
             message.content = 'This message was deleted'
@@ -199,23 +206,23 @@ def message_context_action(request):
                 }
             )
             
-            return JsonResponse({'success': True, 'message': 'Message deleted for everyone'})
+            return Response({'success': True, 'message': 'Message deleted for everyone'})
         
         elif action == 'edit':
             # Only owner can edit, and only text messages within 15 minutes
             if not is_own:
-                return JsonResponse({'success': False, 'error': 'Unauthorized'}, status=403)
+                return Response({'success': False, 'error': 'Unauthorized'}, status=403)
             
             if message.message_type != 'text':
-                return JsonResponse({'success': False, 'error': 'Can only edit text messages'})
+                return Response({'success': False, 'error': 'Can only edit text messages'})
             
             time_since_sent = timezone.now() - message.timestamp
             if time_since_sent.total_seconds() >= 900:  # 15 minutes
-                return JsonResponse({'success': False, 'error': 'Edit time expired'})
+                return Response({'success': False, 'error': 'Edit time expired'})
             
             new_content = data.get('new_content', '').strip()
             if not new_content:
-                return JsonResponse({'success': False, 'error': 'Content cannot be empty'})
+                return Response({'success': False, 'error': 'Content cannot be empty'})
             
             message.content = new_content
             message.is_edited = True
@@ -234,7 +241,7 @@ def message_context_action(request):
                 }
             )
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'message': 'Message edited',
                 'new_content': new_content
@@ -249,7 +256,7 @@ def message_context_action(request):
                 'read_at': read.read_at.isoformat()
             } for read in read_by]
             
-            return JsonResponse({
+            return Response({
                 'success': True,
                 'info': {
                     'sender': message.sender.full_name if message.sender else 'System',
@@ -261,8 +268,8 @@ def message_context_action(request):
             })
         
         else:
-            return JsonResponse({'success': False, 'error': 'Unknown action'})
+            return Response({'success': False, 'error': 'Unknown action'})
         
     except Exception as e:
         logger.error(f"Error in message_context_action: {str(e)}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        return Response({'success': False, 'error': str(e)}, status=500)
