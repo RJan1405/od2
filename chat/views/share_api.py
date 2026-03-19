@@ -119,7 +119,7 @@ def share_content_to_user(request):
     - For NEW chats: sender gets ChatAcceptance, recipient sees in-chat banner
     """
     try:
-        data = json.loads(request.body)
+        data = request.data
         recipient_ids = data.get('recipient_ids', [])
         content_type = data.get('content_type')
         content_id = data.get('content_id')

@@ -161,7 +161,7 @@ def api_repost(request):
     Accepts JSON body: {"type": "scribe|omzo|story|quote", "id": <int>, "content": "<optional caption>"}.
     """
     try:
-        data = json.loads(request.body or '{}')
+        data = request.data
         repost_type = data.get('type')
         repost_id = data.get('id')
         content = (data.get('content') or '').strip()
@@ -521,15 +521,17 @@ def profile_view(request, username=None):
 def toggle_private_chat(request):
     """Toggle whether a chat is in the user's manual 'Private' list (using PinnedChat model)"""
     try:
-        data = json.loads(request.body)
+        data = request.data
+        chat_id = data.get('chat_id')
+        message_ids = data.get('message_ids')  # Optional: specific messages
         username = data.get('username')
 
         target_user = get_object_or_404(CustomUser, username=username)
 
         # Find the private chat between these users
         chat = Chat.objects.filter(
-            chat_type='private',
-            participants=request.user
+            participants=request.user,
+            chat_type='private'
         ).filter(participants=target_user).first()
 
         if not chat:
@@ -887,7 +889,7 @@ def post_scribe(request):
 @permission_classes([IsAuthenticated])
 def toggle_like(request):
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
 
@@ -950,7 +952,7 @@ def toggle_like(request):
 def toggle_dislike(request):
     """Toggle dislike on a scribe"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
 
@@ -998,7 +1000,7 @@ def toggle_dislike(request):
 def toggle_save_post(request):
     """Toggle save/bookmark a post"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
 
@@ -1040,7 +1042,7 @@ def toggle_save_post(request):
 def delete_post(request):
     """Delete a user's own post"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
 
@@ -1081,7 +1083,7 @@ def delete_post(request):
 def report_post(request):
     """Report a post for inappropriate content"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
         reason = data.get('reason')
@@ -1191,7 +1193,7 @@ def get_saved_posts(request):
 def copy_post_link(request):
     """Get the shareable link for a post"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id') or data.get(
             'tweet_id')  # Support both for backward compatibility
 
@@ -1301,7 +1303,7 @@ def add_comment(request):
 def toggle_comment_like(request):
     """Toggle like on a comment"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         comment_id = data.get('comment_id')
 
         if not comment_id:
@@ -1465,7 +1467,7 @@ def get_scribe_comments(request, scribe_id):
 @permission_classes([IsAuthenticated])
 def toggle_follow(request):
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
 
         if not username:
@@ -1570,7 +1572,7 @@ def toggle_follow(request):
 def dismiss_suggestion(request):
     """Dismiss a user suggestion so they don't appear again"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
 
         if not username:
@@ -1606,7 +1608,7 @@ def dismiss_suggestion(request):
 def toggle_block(request):
     """Block or unblock a user"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
 
         if not username:
@@ -1685,7 +1687,7 @@ def toggle_block(request):
 def manage_follow_request(request):
     """Accept or decline a follow request"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
         action = data.get('action')  # 'accept' or 'decline'
 
@@ -1825,7 +1827,7 @@ def get_follow_requests(request):
 @permission_classes([IsAuthenticated])
 def follow_states(request):
     try:
-        data = json.loads(request.body)
+        data = request.data
         usernames = data.get('usernames', [])
 
         if not usernames:
@@ -2270,7 +2272,7 @@ def global_search(request):
 def update_theme(request):
     """Update user theme preference"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         theme = data.get('theme')
 
         # Validate theme
@@ -2821,6 +2823,9 @@ def view_omzo(request, omzo_id):
         return redirect('/')
 
 
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_omzo_batch(request):
     """
     API endpoint for batch fetching omzos with cursor-based pagination.
@@ -2850,16 +2855,14 @@ def get_omzo_batch(request):
 
     try:
         cursor = request.GET.get('cursor')
-        limit = min(int(request.GET.get('limit', 10)),
-                    20)  # Max 20 per request
+        limit = min(int(request.GET.get('limit', 10)), 20)  # Max 20 per request
         exclude_ids_str = request.GET.get('exclude', '')
 
         # Parse excluded IDs
         exclude_ids = set()
         if exclude_ids_str:
             try:
-                exclude_ids = set(int(x)
-                                  for x in exclude_ids_str.split(',') if x.strip())
+                exclude_ids = set(int(x) for x in exclude_ids_str.split(',') if x.strip())
             except ValueError:
                 pass
 
@@ -2952,7 +2955,7 @@ def get_omzo_batch(request):
 def track_omzo_view(request):
     """API endpoint to track when a user watches a specific omzo"""
     try:
-        data = json.loads(request.body)
+        data = request.data
 
         omzo_id = data.get('omzo_id') or data.get('omzo_id')
         if not omzo_id:
@@ -3038,7 +3041,7 @@ def upload_omzo(request):
 def toggle_omzo_like(request):
     """API to like/unlike a omzo"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         omzo_id = data.get('omzo_id')
         omzo = get_object_or_404(Omzo, id=omzo_id)
 
@@ -3086,7 +3089,7 @@ def toggle_omzo_like(request):
 def toggle_omzo_dislike(request):
     """API to dislike/undislike a omzo"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         omzo_id = data.get('omzo_id')
         omzo = get_object_or_404(Omzo, id=omzo_id)
 
@@ -3158,7 +3161,7 @@ def get_omzo_comments(request, omzo_id):
 def add_omzo_comment(request):
     """Add a comment to a omzo."""
     try:
-        data = json.loads(request.body)
+        data = request.data
         omzo_id = data.get('omzo_id') or data.get('omzo_id')
         content = (data.get('content') or '').strip()
 
@@ -3219,7 +3222,7 @@ def add_omzo_comment(request):
 def report_omzo(request):
     """Report a omzo for inappropriate content"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         omzo_id = data.get('omzo_id') or data.get('omzo_id')
         reason = data.get('reason')
         description = data.get('description', '').strip()
@@ -3301,7 +3304,7 @@ def report_omzo(request):
 def toggle_save_scribe(request):
     """Toggle save status for a scribe"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         scribe_id = data.get('scribe_id')
 
         if not scribe_id:
@@ -3339,7 +3342,7 @@ def toggle_save_scribe(request):
 def toggle_save_omzo(request):
     """Toggle save status for an omzo"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         omzo_id = data.get('omzo_id')
 
         if not omzo_id:

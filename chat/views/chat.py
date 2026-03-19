@@ -30,7 +30,8 @@ import json as _json
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 
 logger = logging.getLogger(__name__)
 
@@ -708,14 +709,16 @@ def get_chat_messages(request, chat_id):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def send_message(request):
     try:
-        chat_id = request.POST.get('chat_id')
-        content = request.POST.get('content', '').strip()
-        media_file = request.FILES.get('media')
-        one_time = request.POST.get('one_time', 'false').lower() == 'true'
-        shared_scribe_id = request.POST.get('shared_scribe_id')
-        shared_omzo_id = request.POST.get('shared_omzo_id')
+        # Standardize on request.data for both JSON and Multipart data
+        chat_id = request.data.get('chat_id')
+        content = request.data.get('content', '').strip()
+        media_file = request.data.get('media')
+        one_time = str(request.data.get('one_time', 'false')).lower() == 'true'
+        shared_scribe_id = request.data.get('shared_scribe_id')
+        shared_omzo_id = request.data.get('shared_omzo_id')
 
         # Allow empty content if sharing something
         if not content and not media_file and not shared_scribe_id and not shared_omzo_id:
@@ -724,7 +727,7 @@ def send_message(request):
         chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
 
         # Handle reply
-        reply_to_id = request.POST.get('reply_to')
+        reply_to_id = request.data.get('reply_to')
         reply_to_message = None
         if reply_to_id:
             try:
@@ -829,10 +832,11 @@ def send_message(request):
         return Response({'success': False, 'error': 'Failed to send message'})
 
 
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def get_chats_api(request):
     """API endpoint to get user's chats for the slide-in panel"""
-    if not request.user.is_authenticated:
-        return Response({'success': True, 'chats': []})
 
     try:
         user_chats = Chat.objects.filter(
@@ -937,8 +941,9 @@ def get_chats_api(request):
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def create_chat(request):
+    """FIXED - Universal create_chat API for private and groups"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
 
         other_user = get_object_or_404(CustomUser, username=username)
@@ -983,26 +988,12 @@ def create_chat(request):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
 def create_group(request):
+    """API endpoint to create a group chat from mobile/web"""
     try:
-        # Handle both JSON and Multipart (FormData)
-        data = {}
-        if request.content_type == 'application/json':
-            try:
-                data = json.loads(request.body)
-            except json.JSONDecodeError:
-                pass
-        else:
-            data = request.POST.dict()
-            # Handle stringified participants list from FormData
-            if 'participants' in data:
-                try:
-                    participants_raw = data['participants']
-                    if isinstance(participants_raw, str):
-                        data['participants'] = json.loads(participants_raw)
-                except:
-                    data['participants'] = []
-
+        # request.data handles both JSON and Multipart data correctly
+        data = request.data
         name = data.get('name', '').strip()
         description = data.get('description', '').strip()
 
@@ -1028,7 +1019,8 @@ def create_group(request):
         if max_participants < 2 or max_participants > 500:
             return Response({'success': False, 'error': 'Max participants must be between 2 and 500'})
 
-        group_avatar = request.FILES.get('avatar')
+        # Binary data is also in request.data if using MultiPartParser
+        group_avatar = data.get('avatar')
 
         # Create group
         chat = Chat.objects.create(
@@ -1088,7 +1080,7 @@ def create_group(request):
 def join_group_api(request):
     """API endpoint to join a group by ID (for public groups from discover page)"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         group_id = data.get('group_id')
 
         if not group_id:
@@ -1597,7 +1589,7 @@ def explore(request):
 @permission_classes([IsAuthenticated])
 def manage_join_request(request):
     try:
-        data = json.loads(request.body)
+        data = request.data
         request_id = data.get('request_id')
         action = data.get('action')
 
@@ -1797,7 +1789,7 @@ def mark_message_read(request, message_id):
 def react_to_message(request, message_id):
     """Add or remove emoji reaction to a message"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         emoji = data.get('emoji', '').strip()
 
         if not emoji:
@@ -1920,7 +1912,7 @@ def edit_message(request, message_id):
         if message.message_type == 'media' and not message.content:
             return Response({'success': False, 'error': 'Cannot edit media-only messages'})
 
-        data = json.loads(request.body)
+        data = request.data
         new_content = data.get('content', '').strip()
 
         if not new_content:
@@ -2580,7 +2572,7 @@ def update_group_settings(request, chat_id):
             data = request.POST.dict()
         else:
             try:
-                data = json.loads(request.body)
+                data = request.data
             except Exception:
                 data = {}
 
@@ -2680,7 +2672,7 @@ def remove_group_member(request, chat_id):
         if chat.admin != request.user:
             return Response({'success': False, 'error': 'Only the group admin can remove members'}, status=403)
 
-        data = json.loads(request.body)
+        data = request.data
         user_id = data.get('user_id')
 
         if not user_id:
@@ -2818,7 +2810,7 @@ def get_p2p_cache():
 def p2p_send_signal(request):
     """Send a WebRTC signaling message to another user using database storage"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         target_user_id = data.get('target_user_id')
         chat_id = data.get('chat_id')
         # Contains type, offer/answer/candidate, fileInfo
@@ -3099,7 +3091,7 @@ def p2p_clear_signals(request):
 def send_call_notification(request):
     """Send call notification to other participants via HTTP (fallback if WebSocket fails)"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         chat_id = data.get('chat_id')
         audio_only = data.get('audio_only', False)
 
@@ -3371,6 +3363,9 @@ def auto_accept_chat_for_sender(chat, sender):
         ChatAcceptance.objects.get_or_create(chat=chat, user=sender)
 
 
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def api_explore_feed(request):
     """API endpoint to get paginated explore content (scribes & omzos)"""
     print(
@@ -3379,10 +3374,7 @@ def api_explore_feed(request):
         page = int(request.GET.get('page', 1))
         per_page = int(request.GET.get('per_page', 10))
 
-        # Use existing helper - works for both authenticated and anonymous users
-        content_items = _get_explore_content_batch(
-            page=page, per_page=per_page, user=request.user if request.user.is_authenticated else None)
-        # Use existing helper
+        # Use personalized explore for authenticated user
         content_items = _get_explore_content_batch(
             page=page, per_page=per_page, user=request.user)
 

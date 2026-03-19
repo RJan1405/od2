@@ -151,7 +151,7 @@ def get_message_context_menu(request, message_id):
 def message_context_action(request):
     """Handle context menu actions on messages"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         message_id = data.get('message_id')
         action = data.get('action')
         

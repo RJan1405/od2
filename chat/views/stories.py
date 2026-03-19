@@ -26,7 +26,7 @@ def repost_story(request):
     Creates a new Story that references the original, auto-expires after 24hrs.
     """
     try:
-        data = json.loads(request.body)
+        data = request.data
         original_story_id = data.get('story_id')
         
         if not original_story_id:
@@ -499,7 +499,7 @@ def get_following_stories(request):
 def mark_story_viewed(request):
     """Mark a story as viewed by the current user"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         story_id = data.get('story_id')
         
         if not story_id:
@@ -534,7 +534,7 @@ def mark_story_viewed(request):
 def toggle_story_like(request):
     """Toggle like on a story"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         story_id = data.get('story_id')
         
         if not story_id:
@@ -610,12 +610,12 @@ def toggle_story_like(request):
 def add_story_reply(request):
     """Add a reply to a story (only visible to story poster)"""
     try:
-        data = json.loads(request.body)
+        data = request.data
         story_id = data.get('story_id')
         content = data.get('content', '').strip()
         
         if not story_id:
-            return Response({'success': False, 'error': 'Story ID is required'})
+            return Response({'success': False, 'error': 'Story ID is required'}, status=400)
         
         if not content:
             return Response({'success': False, 'error': 'Reply content is required'})

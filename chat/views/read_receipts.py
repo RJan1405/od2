@@ -37,7 +37,7 @@ def mark_messages_read(request):
     - unread_count: Remaining unread count for the chat
     """
     try:
-        data = json.loads(request.body)
+        data = request.data
         chat_id = data.get('chat_id')
         message_ids = data.get('message_ids')  # Optional: specific messages
 
@@ -119,7 +119,6 @@ def mark_messages_read(request):
         return Response({'success': False, 'error': str(e)}, status=500)
 
 
-@require_GET
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
