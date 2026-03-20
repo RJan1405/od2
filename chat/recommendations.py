@@ -104,7 +104,10 @@ class ContentRecommender:
 
         # Candidate Generation: Get recent omzo (e.g., last 30 days) to keep query fast
         cutoff = timezone.now() - timezone.timedelta(days=30)
-        qs = Omzo.objects.filter(created_at__gte=cutoff).select_related(
+        from django.db.models import Q
+        # Base filter: Public accounts OR Accounts I follow OR My Own accounts
+        base_filter = Q(user__is_private=False) | Q(user_id__in=following_ids) | Q(user=self.user)
+        qs = Omzo.objects.filter(base_filter, created_at__gte=cutoff).select_related(
             'user').prefetch_related('likes', 'comments')
 
         # Annotate with engagement counts
@@ -195,7 +198,7 @@ class ContentRecommender:
         """
         # Use a longer candidate window and rank by normalized engagement/time
         cutoff = timezone.now() - timezone.timedelta(days=90)
-        qs = Omzo.objects.filter(created_at__gte=cutoff).select_related('user')
+        qs = Omzo.objects.filter(user__is_private=False, created_at__gte=cutoff).select_related('user')
         qs = qs.annotate(num_likes=Count('likes'), num_comments=Count('comments'))
         candidates = list(qs)
 

@@ -16,7 +16,8 @@ from .chat import (
     p2p_send_signal, p2p_get_signals, get_chat_participants_for_p2p, p2p_clear_signals,
     get_chats_api, load_more_explore_content, send_call_notification,
     get_dm_requests, get_dm_requests_count, accept_dm_request, decline_dm_request,
-    auto_accept_chat_for_sender, check_dm_request, api_explore_feed
+    auto_accept_chat_for_sender, check_dm_request, api_explore_feed,
+    manage_chat_acceptance
 )
 from .media import (
     handle_media_upload, serve_media_file
@@ -28,7 +29,7 @@ from .social import (
     toggle_account_privacy, get_follow_requests, follow_states, dismiss_suggestion,
     get_hashtag_scribes, get_trending_hashtags, get_user_mentions,
     search_users_for_mention, update_theme, get_all_activity,
-    global_search,
+    global_search, get_blocked_users,
     get_profile_followers, get_profile_following,
     toggle_save_post, delete_post, report_post, get_saved_posts, copy_post_link,
     view_post, view_omzo, omzo_view, get_omzo_batch, upload_omzo, toggle_omzo_like, toggle_omzo_dislike, add_omzo_comment, get_omzo_comments,

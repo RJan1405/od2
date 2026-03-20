@@ -285,7 +285,7 @@ def get_csrf_token(request):
 def api_user_profile(request, username):
     """API endpoint to get user profile by username"""
     from django.shortcuts import get_object_or_404
-    from ..models import CustomUser, Follow
+    from ..models import CustomUser, Follow, FollowRequest
 
     # Get the user by username or 'me' for current user
     if username == 'me':
@@ -293,15 +293,28 @@ def api_user_profile(request, username):
     else:
         user = get_object_or_404(CustomUser, username=username)
 
+    # Determine if current user can see this profile's content
+    is_following = False
+    if not user == request.user and request.user.is_authenticated:
+        is_following = Follow.objects.filter(follower=request.user, following=user).exists()
+    
+    can_view_content = True
+    if not user == request.user:
+        if user.is_private and not is_following:
+            can_view_content = False
+
     # Get user's scribes
     from ..models import Scribe, Omzo, Like, Dislike, SavedScribeItem, SavedOmzoItem
 
-    scribes_queryset = Scribe.objects.filter(user=user).select_related(
-        'user',
-        'original_scribe', 'original_scribe__user',
-        'original_omzo', 'original_omzo__user',
-        'original_story', 'original_story__user'
-    ).order_by('-timestamp')
+    if can_view_content:
+        scribes_queryset = Scribe.objects.filter(user=user).select_related(
+            'user',
+            'original_scribe', 'original_scribe__user',
+            'original_omzo', 'original_omzo__user',
+            'original_story', 'original_story__user'
+        ).order_by('-timestamp')
+    else:
+        scribes_queryset = Scribe.objects.none()
 
     scribes_data = []
     reposts_data = []
@@ -434,7 +447,10 @@ def api_user_profile(request, username):
             scribes_data.append(scribe_obj)
 
     # Get user's omzos
-    omzos_queryset = Omzo.objects.filter(user=user).order_by('-created_at')
+    if can_view_content:
+        omzos_queryset = Omzo.objects.filter(user=user).order_by('-created_at')
+    else:
+        omzos_queryset = Omzo.objects.none()
     omzos_data = []
 
     for omzo in omzos_queryset:
@@ -471,6 +487,22 @@ def api_user_profile(request, username):
             'is_reposted': is_reposted,
         })
 
+    # Follow request status (from ME to THEM)
+    follow_request_status = None
+    if not user == request.user and request.user.is_authenticated:
+        req = FollowRequest.objects.filter(requester=request.user, target=user).first()
+        if req:
+            follow_request_status = req.status
+
+    # Check if THEY have requested to follow ME
+    is_requesting_follow = False
+    if not user == request.user and request.user.is_authenticated:
+        is_requesting_follow = FollowRequest.objects.filter(
+            requester=user, 
+            target=request.user, 
+            status='pending'
+        ).exists()
+
     return Response({
         'success': True,
         'user': {
@@ -492,7 +524,9 @@ def api_user_profile(request, username):
             'follower_count': user.follower_count,
             'following_count': user.following_count,
             'post_count': user.scribes.count(),
-            'is_following': Follow.objects.filter(follower=request.user, following=user).exists() if request.user.is_authenticated and username != 'me' and user != request.user else False,
+            'is_following': is_following,
+            'follow_request_status': follow_request_status,
+            'is_requesting_follow': is_requesting_follow,
         },
         'scribes': scribes_data,
         'reposts': reposts_data,

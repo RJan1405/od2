@@ -14,14 +14,12 @@ from datetime import timedelta
 from chat.utils import notify_sidebar_for_chat, broadcast_message_to_chat, broadcast_message_consumed
 from chat.utils import clear_sidebar_unread
 from chat.recommendations import ContentRecommender
-
-
 from chat.models import (
     CustomUser, Chat, Message, GroupJoinRequest, Follow, Story, StoryView,
     StoryLike, StoryReply, Scribe, Like, Comment, MessageDeletion, MessageRead,
     MessageReaction, StarredMessage, PinnedChat, SavedPost, Omzo, Dislike,
     DismissedSuggestion, ChatAcceptance, SavedScribeItem, SavedOmzoItem,
-    OmzoLike, OmzoDislike, OmzoComment
+    OmzoLike, OmzoDislike, OmzoComment, Block
 )
 from chat.forms import ScribeForm
 from .media import handle_media_upload
@@ -610,6 +608,24 @@ def get_chat_messages(request, chat_id):
     """FIXED - Get chat messages with proper API response"""
     chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
 
+    is_accepted = True
+    is_message_request = False
+    if chat.chat_type == 'private':
+        # Check if user has already accepted
+        is_accepted = ChatAcceptance.objects.filter(chat=chat, user=request.user).exists()
+        
+        other_user = chat.participants.exclude(id=request.user.id).first()
+        if other_user:
+            from chat.models import Block
+            # If we've blocked them, hide the accept banner (consider it "processed")
+            if Block.objects.filter(blocker=request.user, blocked=other_user).exists():
+                is_accepted = True
+        
+        if not is_accepted:
+            has_they_messaged = chat.messages.exclude(sender=request.user).exclude(message_type='system').exists()
+            if has_they_messaged:
+                is_message_request = True
+
     last_message_time = request.GET.get('last_message_time')
     after_id = request.GET.get('after_id')
 
@@ -700,8 +716,22 @@ def get_chat_messages(request, chat_id):
 
         messages_data.append(message_data)
 
+    is_other_blocked = False
+    am_i_blocked = False
+    if chat.chat_type == 'private':
+        other_user = chat.participants.exclude(id=request.user.id).first()
+        if other_user:
+            from chat.models import Block
+            is_other_blocked = Block.objects.filter(blocker=request.user, blocked=other_user).exists()
+            am_i_blocked = Block.objects.filter(blocker=other_user, blocked=request.user).exists()
+
     return Response({
+        'success': True,
         'messages': messages_data,
+        'is_accepted': is_accepted,
+        'is_message_request': is_message_request,
+        'is_other_blocked': is_other_blocked,
+        'am_i_blocked': am_i_blocked,
         'chat_updated': chat.updated_at.isoformat()
     })
 
@@ -725,6 +755,16 @@ def send_message(request):
             return Response({'success': False, 'error': 'Message cannot be empty'})
 
         chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
+
+        # 🛡️ Block check - prevent messaging if blocked
+        if chat.chat_type == 'private':
+            other_user = chat.participants.exclude(id=request.user.id).first()
+            if other_user:
+                from chat.models import Block
+                if Block.objects.filter(blocker=request.user, blocked=other_user).exists():
+                    return Response({'success': False, 'error': 'You have blocked this user'})
+                if Block.objects.filter(blocker=other_user, blocked=request.user).exists():
+                    return Response({'success': False, 'error': 'You cannot message this user'})
 
         # Handle reply
         reply_to_id = request.data.get('reply_to')
@@ -869,25 +909,39 @@ def get_chats_api(request):
 
             # Get other participant for private chats
             other_user = None
+            is_accepted = True
+            is_message_request = False
+            
             if chat.chat_type == 'private':
                 other_user = chat.participants.exclude(
                     id=request.user.id).first()
+                
+                # Check acceptance
+                is_accepted = ChatAcceptance.objects.filter(chat=chat, user=request.user).exists()
+                
+                from chat.models import Block
+                # If we've blocked them, hide the accept banner
+                if other_user and Block.objects.filter(blocker=request.user, blocked=other_user).exists():
+                    is_accepted = True
+
+                # It's a request if WE haven't accepted and THEY messaged
+                if not is_accepted:
+                    has_they_messaged = chat.messages.exclude(sender=request.user).exclude(message_type='system').exists()
+                    if has_they_messaged:
+                        is_message_request = True
 
                 # Calculate actual online status based on last_seen
-                # User is only online if is_online=True AND last_seen is within 2 minutes
                 if other_user:
                     is_actually_online = False
                     if other_user.is_online and other_user.last_seen:
                         time_since_last_seen = timezone.now() - other_user.last_seen
-                        # Consider online if last seen within 2 minutes (120 seconds)
                         is_actually_online = time_since_last_seen.total_seconds() < 120
 
-                    # Update the user's is_online status if it's stale
                     if other_user.is_online and not is_actually_online:
                         other_user.is_online = False
                         other_user.save(update_fields=['is_online'])
 
-            # Build last_message payload — never reveal content for one-time messages
+            # Build last_message payload
             last_message_data = None
             if last_message:
                 is_one_time = bool(last_message.one_time)
@@ -908,12 +962,13 @@ def get_chats_api(request):
                 'name': chat.name if chat.chat_type == 'group' else ((other_user.full_name or other_user.username) if other_user else 'Unknown'),
                 'username': other_user.username if other_user else None,
                 'is_group': chat.chat_type == 'group',
+                'is_accepted': is_accepted,
+                'is_message_request': is_message_request,
                 'last_message': last_message_data,
                 'last_message_time': last_message.timestamp.isoformat() if last_message else None,
                 'unread_count': unread_count,
                 'avatar': other_user.profile_picture_url if other_user else (chat.group_avatar.url if chat.group_avatar else None),
                 'initials': other_user.initials if other_user else (chat.name[:1].upper() if chat.name else 'G'),
-                # Include full other_user object for frontend
                 'other_user': {
                     'id': other_user.id,
                     'username': other_user.username,
@@ -992,18 +1047,15 @@ def create_chat(request):
 def create_group(request):
     """API endpoint to create a group chat from mobile/web"""
     try:
-        # request.data handles both JSON and Multipart data correctly
         data = request.data
         name = data.get('name', '').strip()
         description = data.get('description', '').strip()
-
-        # Handle max_participants from data (string or int)
+        
         try:
-            max_participants = int(data.get('max_participants', 50))
+            max_participants = int(data.get('max_participants', 100))
         except (ValueError, TypeError):
-            max_participants = 50
+            max_participants = 100
 
-        # Handle is_public (string "true"/"false" or boolean)
         is_public_val = data.get('is_public', False)
         if isinstance(is_public_val, str):
             is_public = is_public_val.lower() == 'true'
@@ -1013,16 +1065,8 @@ def create_group(request):
         if not name:
             return Response({'success': False, 'error': 'Group name is required'})
 
-        if len(name) > 100:
-            return Response({'success': False, 'error': 'Group name too long'})
-
-        if max_participants < 2 or max_participants > 500:
-            return Response({'success': False, 'error': 'Max participants must be between 2 and 500'})
-
-        # Binary data is also in request.data if using MultiPartParser
         group_avatar = data.get('avatar')
 
-        # Create group
         chat = Chat.objects.create(
             chat_type='group',
             name=name,
@@ -1032,27 +1076,62 @@ def create_group(request):
             is_public=is_public,
             group_avatar=group_avatar
         )
-
-        # Add creator as participant
         chat.participants.add(request.user)
 
-        # Add selected participants
         participant_ids = data.get('participants', [])
         if participant_ids and isinstance(participant_ids, list):
-            # Ensure identifiers are consistent (strings vs ints)
-            try:
-                users_to_add = CustomUser.objects.filter(
-                    id__in=participant_ids)
-                chat.participants.add(*users_to_add)
-            except Exception as e:
-                logger.error(f"Error adding participants: {e}")
+            users_to_add = CustomUser.objects.filter(id__in=participant_ids)
+            chat.participants.add(*users_to_add)
 
-        # Create system message
         Message.objects.create(
             chat=chat,
             content=f'{request.user.full_name} created the group',
             message_type='system'
         )
+
+        return Response({'success': True, 'chat_id': chat.id})
+    except Exception as e:
+        logger.error(f"Error in create_group: {str(e)}")
+        return Response({'success': False, 'error': 'Failed to create group'})
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def manage_chat_acceptance(request):
+    """Manage chat request: accept or block"""
+    try:
+        chat_id = request.data.get('chat_id')
+        action = request.data.get('action') # 'accept' or 'block'
+
+        if not chat_id or not action:
+            return Response({'success': False, 'error': 'chat_id and action are required'})
+
+        chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
+
+        other_user = None
+        if chat.chat_type == 'private':
+            other_user = chat.participants.exclude(id=request.user.id).first()
+
+        if action == 'accept':
+            ChatAcceptance.objects.get_or_create(chat=chat, user=request.user)
+            return Response({'success': True, 'message': 'Chat accepted'})
+
+        elif action == 'block':
+            if other_user:
+                from chat.models import Block, Follow, FollowRequest
+                Block.objects.get_or_create(blocker=request.user, blocked=other_user)
+                
+                Follow.objects.filter(follower=request.user, following=other_user).delete()
+                Follow.objects.filter(follower=other_user, following=request.user).delete()
+                FollowRequest.objects.filter(requester=request.user, target=other_user).delete()
+                FollowRequest.objects.filter(requester=other_user, target=request.user).delete()
+                
+                return Response({'success': True, 'message': 'User blocked'})
+            
+        return Response({'success': False, 'error': 'Invalid action or user'})
+    except Exception as e:
+        logger.error(f"Error in manage_chat_acceptance: {str(e)}")
+        return Response({'success': False, 'error': str(e)})
 
         return Response({
             'success': True,
@@ -1211,9 +1290,17 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
     # Get users that current user follows (to exclude them)
     following_ids = []
     if user:
+        # Exclude following, own posts, and blocked users
         following_ids = list(Follow.objects.filter(
             follower=user).values_list('following_id', flat=True))
-        following_ids.append(user.id)  # Also exclude own posts
+        following_ids.append(user.id)
+        
+        # Also exclude blocked users and users who blocked us
+        from .social import Block
+        blocked_ids = list(Block.objects.filter(blocker=user).values_list('blocked_id', flat=True))
+        blocked_me_ids = list(Block.objects.filter(blocked=user).values_list('blocker_id', flat=True))
+        
+        following_ids = list(set(following_ids + blocked_ids + blocked_me_ids))
 
     # Create a cache key unique to this user (no hour component - cleared on follow/unfollow)
     cache_key = f'explore_order_{user.id if user else "anon"}'
@@ -1226,6 +1313,7 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
         # Get scribes from users NOT followed (discovery content)
         # Exclude reposts - only show original content in explore
         scribes_query = Scribe.objects.exclude(user_id__in=following_ids).filter(
+            user__is_private=False,
             original_scribe__isnull=True,
             original_omzo__isnull=True,
             original_story__isnull=True
@@ -1236,7 +1324,7 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
             .values_list('id', flat=True)
             .order_by('-timestamp'))
 
-        omzo_query = Omzo.objects.exclude(user_id__in=following_ids)
+        omzo_query = Omzo.objects.exclude(user_id__in=following_ids).filter(user__is_private=False)
         omzo_ids = list(
             omzo_query.values_list('id', flat=True)
             .order_by('-created_at'))

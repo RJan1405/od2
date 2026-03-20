@@ -8,14 +8,6 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-
-#---------------------------Production starts----------------------------
-
-"""
-
-
-
 # Load environment variables from .env if it exists
 try:
     from dotenv import load_dotenv
@@ -47,9 +39,7 @@ if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # Site domain for clean invite links (defaults to production if not in env)
-# SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'https://odnixdeploy.onrender.com')
-# SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'https://odnixdeploy.onrender.com')
-SITE_DOMAIN = 'http://192.168.104.187:8000'
+SITE_DOMAIN = os.environ.get('SITE_DOMAIN', 'https://odnixdeploy.onrender.com')
 
 # CORS settings for React frontend
 # Defaults to localhost + production URL
@@ -89,75 +79,6 @@ if env_csrf:
         CSRF_TRUSTED_ORIGINS.append("https://*.trycloudflare.com")
 else:
     CSRF_TRUSTED_ORIGINS = DEFAULT_CORS_ORIGINS + ["https://*.trycloudflare.com"]
-    
-
-
-
-"""
-#---------------------------Production Ends----------------------------
-
-#---------------------------Local Starts----------------------------
-
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-key-in-production-123456789')
-
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
-
-# Render specific
-RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_EXTERNAL_HOSTNAME:
-    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-
-# FIXED: Site domain for clean invite links
-# SITE_DOMAIN = 'http://192.168.104.187:8000'
-SITE_DOMAIN = "https://odnixdeploy.onrender.com"
-
-# CORS settings for React frontend
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite dev server (default)
-    "http://localhost:8080",  # Vite dev server (configured)
-    "http://localhost:3000",  # Alternative React dev server
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:8080",
-    "http://192.168.104.187:8080",
-    "http://192.168.104.187:8000",
-    "http://192.168.0.104:8080",
-    "http://127.0.0.1:3000",
-    "https://api.odnix.org",
-    "https://odnixdeploy.onrender.com",
-]
-CORS_ALLOW_CREDENTIALS = True  # Required for Django admin session
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'https://api.odnix.org',
-    "https://odnixdeploy.onrender.com",
-]
-
-# CSRF trusted origins for POST requests (includes localhost + Cloudflare tunnel)
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:8080",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://192.168.104.187:8080",
-    "http://192.168.104.187:8000",
-    "http://192.168.0.104:8080",
-    "http://127.0.0.1:8080",
-    "http://127.0.0.1:3000",
-    "https://*.trycloudflare.com", # Allow all Cloudflare tunnels
-    "https://api.odnix.org",
-    "https://odnixdeploy.onrender.com",     
-]
-
-#---------------------------Local Ends----------------------------
 
 INSTALLED_APPS = [
     'jazzmin',  # Must be before django.contrib.admin

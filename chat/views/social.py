@@ -1526,6 +1526,22 @@ def toggle_follow(request):
                 )
                 is_following = False
                 follow_request_status = 'pending'
+
+                # Send Notification for Follow Request
+                try:
+                    channel_layer = get_channel_layer()
+                    async_to_sync(channel_layer.group_send)(
+                        f'user_notify_{target_user.id}',
+                        {
+                            'type': 'notify.follow_request',
+                            'requester_id': request.user.id,
+                            'requester_name': request.user.full_name,
+                            'requester_username': request.user.username,
+                            'requester_avatar': request.user.profile_picture.url if request.user.profile_picture else None,
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending follow request notification: {e}")
             else:
                 # Public account - follow directly
                 Follow.objects.create(
@@ -1610,12 +1626,16 @@ def toggle_block(request):
     try:
         data = request.data
         username = data.get('username')
+        user_id = data.get('user_id')
 
-        if not username:
-            return Response({'success': False, 'error': 'Username is required'})
+        if not username and not user_id:
+            return Response({'success': False, 'error': 'Username or user_id is required'})
 
         try:
-            target_user = CustomUser.objects.get(username=username)
+            if user_id:
+                target_user = CustomUser.objects.get(id=user_id)
+            else:
+                target_user = CustomUser.objects.get(username=username)
         except CustomUser.DoesNotExist:
             return Response({'success': False, 'error': 'User not found'})
 
@@ -1660,7 +1680,6 @@ def toggle_block(request):
                 following=request.user
             ).delete()
 
-            # Remove any pending follow requests
             FollowRequest.objects.filter(
                 requester=request.user,
                 target=target_user
@@ -1669,16 +1688,40 @@ def toggle_block(request):
                 requester=target_user,
                 target=request.user
             ).delete()
-
         return Response({
             'success': True,
             'is_blocked': is_blocked,
-            'username': username
+            'message': 'User blocked' if is_blocked else 'User unblocked'
         })
 
     except Exception as e:
         logger.error(f"Error in toggle_block: {str(e)}")
-        return Response({'success': False, 'error': 'Failed to toggle block'})
+        return Response({'success': False, 'error': 'Failed to block user'})
+
+
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def get_blocked_users(request):
+    """Get list of users blocked by current user"""
+    try:
+        # Import inside to avoid circular deps if any
+        from chat.models import Block
+        blocked_relations = Block.objects.filter(blocker=request.user).select_related('blocked')
+        data = []
+        for rel in blocked_relations:
+            u = rel.blocked
+            data.append({
+                'id': u.id,
+                'username': u.username,
+                'full_name': u.full_name,
+                'profile_picture': u.profile_picture_url,
+                'is_verified': u.is_verified
+            })
+        return Response({'success': True, 'users': data})
+    except Exception as e:
+        logger.error(f"Error in get_blocked_users: {str(e)}")
+        return Response({'success': False, 'error': 'Failed to load blocked users'})
 
 
 @api_view(['POST'])
@@ -2188,14 +2231,32 @@ def global_search(request):
         combined = []
 
         for u in users:
+            is_following = False
+            follow_request_status = None
+            if request.user.is_authenticated:
+                # Optimized follow check
+                is_following = Follow.objects.filter(follower=request.user, following=u).exists()
+                if not is_following:
+                    req = FollowRequest.objects.filter(
+                        requester=request.user, 
+                        target=u, 
+                        status='pending'
+                    ).first()
+                    if req:
+                        follow_request_status = 'pending'
+
             combined.append({
                 'type': 'person',
                 'id': u.id,
                 'title': u.full_name or u.username,
                 'subtitle': f"@{u.username}",
                 'image_url': u.profile_picture_url,
-                'data': {'username': u.username},
-                # Sort weight? Users match usually high relevance
+                'data': {
+                    'username': u.username,
+                    'is_private': u.is_private,
+                    'is_following': is_following,
+                    'follow_request_status': follow_request_status,
+                },
                 'score': 100
             })
 
@@ -2559,6 +2620,24 @@ def get_all_activity(request):
                     'username': view.viewer.username,
                     'full_name': view.viewer.full_name,
                     'profile_picture_url': view.viewer.profile_picture_url,
+                }
+            })
+
+        # 12. Follow Requests (for private accounts)
+        follow_requests = FollowRequest.objects.filter(
+            target=request.user,
+            status='pending'
+        ).select_related('requester').order_by('-created_at')[:20]
+
+        for freq in follow_requests:
+            activity_items.append({
+                'type': 'follow_request',
+                'timestamp': freq.created_at,
+                'user': {
+                    'id': freq.requester.id,
+                    'username': freq.requester.username,
+                    'full_name': freq.requester.full_name,
+                    'profile_picture_url': freq.requester.profile_picture_url,
                 }
             })
 
