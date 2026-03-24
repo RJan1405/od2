@@ -109,8 +109,8 @@ if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # FIXED: Site domain for clean invite links
-SITE_DOMAIN = 'http://192.168.104.187:8000'
-# SITE_DOMAIN = "https://odnixdeploy.onrender.com"
+# SITE_DOMAIN = 'http://192.168.104.187:8000'
+SITE_DOMAIN = "https://odnixdeploy.onrender.com"
 
 # CORS settings for React frontend
 CORS_ALLOWED_ORIGINS = [
