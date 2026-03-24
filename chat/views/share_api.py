@@ -14,6 +14,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from chat.models import (
     CustomUser, Chat, Message, Scribe, Omzo, Story, ChatRequest, ChatAcceptance
 )
+from chat.encryption import encrypt_text
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ def share_content_to_user(request):
                 Message.objects.create(
                     chat=chat,
                     sender=request.user,
-                    content=message_text or '',
+                    content=encrypt_text(message_text or ''),
                     message_type='text',
                     reactions={'shared_content': shared_data}
                 )

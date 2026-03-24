@@ -30,6 +30,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
+from chat.encryption import encrypt_text, decrypt_text
 
 logger = logging.getLogger(__name__)
 
@@ -315,9 +316,11 @@ def dashboard(request):
 
         # Get last message
         last_message = chat.messages.order_by('-timestamp').first()
+        from chat.encryption import decrypt_text
         if last_message:
-            chat_info['last_message_preview'] = last_message.content[:50] + \
-                ('...' if len(last_message.content) > 50 else '')
+            decrypted_content = decrypt_text(last_message.content)
+            chat_info['last_message_preview'] = decrypted_content[:50] + \
+                ('...' if len(decrypted_content) > 50 else '')
             chat_info['last_message_time'] = last_message.timestamp
         else:
             chat_info['last_message_preview'] = None
@@ -665,7 +668,7 @@ def get_chat_messages(request, chat_id):
 
         message_data = {
             'id': msg.id,
-            'content': msg.content,
+            'content': decrypt_text(msg.content),
             'sender': msg.sender.username if msg.sender else 'System',
             'sender_name': msg.sender.full_name if msg.sender else 'System',
             'sender_avatar': msg.sender.profile_picture_url if msg.sender else None,
@@ -794,7 +797,7 @@ def send_message(request):
         message = Message.objects.create(
             chat=chat,
             sender=request.user,
-            content=content or f'Sent {media_type}' if media_file else content or 'Shared content',
+            content=encrypt_text(content or f'Sent {media_type}' if media_file else content or 'Shared content'),
             message_type=message_type,
             media_url=media_url,
             media_type=media_type,
@@ -814,7 +817,7 @@ def send_message(request):
         notify_sidebar_for_chat(
             chat=chat,
             sender=request.user,
-            last_message_text='🔒 One-time message' if message.one_time else message.content
+            last_message_text='🔒 One-time message' if message.one_time else decrypt_text(message.content)
         )
 
         # 🔥 Broadcast the message to all participants via WebSocket
@@ -824,7 +827,7 @@ def send_message(request):
             'success': True,
             'message': {
                 'id': message.id,
-                'content': message.content,
+                'content': decrypt_text(message.content),
                 'sender': message.sender.username,
                 'sender_name': message.sender.full_name,
                 'sender_avatar': message.sender.profile_picture_url,
@@ -843,7 +846,7 @@ def send_message(request):
                 'has_media': message.has_media,
                 'reply_to': {
                     'id': message.reply_to.id if message.reply_to else None,
-                    'content': message.reply_to.content if message.reply_to else None,
+                    'content': decrypt_text(message.reply_to.content) if message.reply_to else None,
                     'sender_name': message.reply_to.sender.full_name if message.reply_to else None,
                 } if message.reply_to else None,
                 'shared_scribe': {
@@ -898,7 +901,7 @@ def get_chats_api(request):
                     else:
                         last_msg_content = 'Sent a file'
                 else:
-                    last_msg_content = last_message.content
+                    last_msg_content = decrypt_text(last_message.content)
 
             # Get unread count - messages not read by current user and not sent by current user
             unread_count = chat.messages.exclude(
@@ -1806,7 +1809,7 @@ def consume_one_time_message(request, message_id):
         # Return response immediately with pre-built URLs
         return Response({
             'success': True,
-            'content': message.content,
+            'content': decrypt_text(message.content) if message.content else message.content,
             'media_url': media_url,
             'media_type': message.media_type,
             'media_filename': message.media_filename,
@@ -2017,7 +2020,7 @@ def edit_message(request, message_id):
             message.original_content = message.content
 
         # Update message
-        message.content = new_content
+        message.content = encrypt_text(new_content)
         message.is_edited = True
         message.edited_at = timezone.now()
         message.save()
@@ -2026,7 +2029,7 @@ def edit_message(request, message_id):
             'success': True,
             'message': {
                 'id': message.id,
-                'content': message.content,
+                'content': new_content,
                 'is_edited': message.is_edited,
                 'edited_at': message.edited_at.isoformat() if message.edited_at else None
             }

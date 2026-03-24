@@ -109,8 +109,8 @@ if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # FIXED: Site domain for clean invite links
-# SITE_DOMAIN = 'http://192.168.104.187:8000'
-SITE_DOMAIN = "https://odnixdeploy.onrender.com"
+SITE_DOMAIN = 'http://192.168.104.187:8000'
+# SITE_DOMAIN = "https://odnixdeploy.onrender.com"
 
 # CORS settings for React frontend
 CORS_ALLOWED_ORIGINS = [
@@ -321,6 +321,14 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # For development/testing - uncomment to see emails in console
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# TWILIO CONFIGURATION for Phone Verification
+# Toggle this to True in production to enable real SMS verification
+# Hardcode it to True temporarily for testing
+ENABLE_PHONE_VERIFICATION = False  # os.environ.get('ENABLE_PHONE_VERIFICATION', 'False') == 'True'
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
 
 # Session settings
 SESSION_COOKIE_AGE = 86400  # 1 day

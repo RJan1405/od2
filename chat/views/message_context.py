@@ -9,6 +9,7 @@ import json
 import logging
 
 from chat.models import Message, StarredMessage, MessageDeletion, MessageRead
+from chat.encryption import encrypt_text, decrypt_text
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
@@ -178,7 +179,7 @@ def message_context_action(request):
         
         elif action == 'copy':
             # Frontend handles the actual copying
-            return Response({'success': True, 'content': message.content})
+            return Response({'success': True, 'content': decrypt_text(message.content)})
         
         elif action == 'delete_me':
             # Delete for current user only
@@ -191,7 +192,7 @@ def message_context_action(request):
                 return Response({'success': False, 'error': 'Unauthorized'}, status=403)
             
             # Mark message as deleted for everyone
-            message.content = 'This message was deleted'
+            message.content = encrypt_text('This message was deleted')
             message.media_url = None
             message.save()
             
@@ -224,7 +225,7 @@ def message_context_action(request):
             if not new_content:
                 return Response({'success': False, 'error': 'Content cannot be empty'})
             
-            message.content = new_content
+            message.content = encrypt_text(new_content)
             message.is_edited = True
             message.edited_at = timezone.now()
             message.save()

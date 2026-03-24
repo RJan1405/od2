@@ -10,6 +10,7 @@ from .models import Message
 logger = logging.getLogger(__name__)
 
 from django.core.cache import cache
+from .encryption import decrypt_text
 
 def should_send_call_notification(chat_id, sender_id):
     """
@@ -43,7 +44,7 @@ def notify_sidebar_for_chat(chat, sender, last_message_text):
                 "type": "sidebar_update",
                 "chat_id": chat.id,
                 "unread_count": unread_count,
-                "last_message": last_message_text,
+                "last_message": decrypt_text(last_message_text),
             }
         )
 
@@ -66,7 +67,7 @@ def broadcast_message_to_chat(chat, message, exclude_sender=True):
 
     message_data = {
         "id": message.id,
-        "content": message.content,
+        "content": decrypt_text(message.content),
         "sender": message.sender.username,
         "sender_name": message.sender.full_name,
         "sender_avatar": sender_avatar,
@@ -84,7 +85,7 @@ def broadcast_message_to_chat(chat, message, exclude_sender=True):
         "has_media": message.has_media if hasattr(message, 'has_media') else False,
         "reply_to": {
             "id": message.reply_to.id,
-            "content": message.reply_to.content,
+            "content": decrypt_text(message.reply_to.content),
             "sender_name": message.reply_to.sender.full_name
         } if message.reply_to else None
     }

@@ -410,9 +410,11 @@ def profile_view(request, username=None):
                 id=request.user.id).first()
             chat_info['other_user'] = other_participant
         last_message = chat.messages.order_by('-timestamp').first()
+        from chat.encryption import decrypt_text
         if last_message:
-            chat_info['last_message_preview'] = last_message.content[:50] + \
-                ('...' if len(last_message.content) > 50 else '')
+            decrypted_content = decrypt_text(last_message.content)
+            chat_info['last_message_preview'] = decrypted_content[:50] + \
+                ('...' if len(decrypted_content) > 50 else '')
         else:
             chat_info['last_message_preview'] = None
         all_chats.append(chat_info)
@@ -3215,6 +3217,7 @@ def get_omzo_comments(request, omzo_id):
                 'id': rc.id,
                 'content': rc.content,
                 'created_at': rc.created_at.isoformat(),
+                'parent': rc.parent_id,
                 'user': {
                     'id': rc.user.id,
                     'username': rc.user.username,
@@ -3252,8 +3255,9 @@ def add_omzo_comment(request):
             return Response({'success': False, 'error': 'Comment too long (max 500)'}, status=400)
 
         omzo = get_object_or_404(Omzo, id=omzo_id)
+        parent_id = data.get('parent_id')
         rc = OmzoComment.objects.create(
-            omzo=omzo, user=request.user, content=content)
+            omzo=omzo, user=request.user, content=content, parent_id=parent_id)
 
         # Send Notification if not self-comment
         if request.user.id != omzo.user.id:
@@ -3278,6 +3282,7 @@ def add_omzo_comment(request):
                 'id': rc.id,
                 'content': rc.content,
                 'created_at': rc.created_at.isoformat(),
+                'parent': rc.parent_id,
                 'user': {
                     'id': request.user.id,
                     'username': request.user.username,

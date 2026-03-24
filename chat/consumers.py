@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from .models import Chat, Message, MessageRead
 from django.utils import timezone
 from .odnix_security import OdnixSecurity, DH_PRIME, DH_G
+from .encryption import encrypt_text, decrypt_text
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -346,7 +347,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         return Message.objects.create(
             chat=chat,
             sender=self.user,
-            content=content,
+            content=encrypt_text(content),
             one_time=one_time,
             reply_to=reply_to
         )
@@ -390,7 +391,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     def serialize_message(self, message):
         return {
             "id": message.id,
-            "content": message.content,
+            "content": decrypt_text(message.content),
             "sender": message.sender.username,
             "sender_name": message.sender.full_name,
             "sender_avatar": message.sender.profile_picture_url if hasattr(message.sender, 'profile_picture_url') else None,
@@ -403,7 +404,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             "sender_id": message.sender_id,
             "reply_to": {
                 "id": message.reply_to.id,
-                "content": message.reply_to.content,
+                "content": decrypt_text(message.reply_to.content),
                 "sender_name": message.reply_to.sender.full_name
             } if message.reply_to else None
         }
@@ -494,7 +495,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 if last_msg.message_type == 'media':
                     last_message = '📷 Sent a file'
                 else:
-                    last_message = last_msg.content[:50] + ('...' if len(last_msg.content) > 50 else '')
+                    decrypted_content = decrypt_text(last_msg.content)
+                    last_message = decrypted_content[:50] + ('...' if len(decrypted_content) > 50 else '')
             
             return {
                 'id': chat.id,

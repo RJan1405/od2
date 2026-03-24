@@ -1,6 +1,11 @@
 from django.contrib.auth import authenticate
 from django.db import transaction
-from ..models import CustomUser
+from django.conf import settings
+from ..models import CustomUser, PhoneVerificationToken
+import logging
+import json
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -91,7 +96,7 @@ def api_logout(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def api_register(request):
-    """API endpoint for user registration (mobile/frontend)"""
+    """API endpoint for user registration (mobile/frontend) with optional Twilio OTP"""
     try:
         data = request.data
         username = data.get('username')
@@ -99,6 +104,7 @@ def api_register(request):
         password = data.get('password')
         name = data.get('name', '')
         lastname = data.get('lastname', '')
+        phone_number = data.get('phone_number', '').strip()
         
         if not username or not email or not password:
             return Response({
@@ -112,59 +118,171 @@ def api_register(request):
         if CustomUser.objects.filter(email=email).exists():
             return Response({'success': False, 'error': 'Email already exists'}, status=400)
             
+        if phone_number and CustomUser.objects.filter(phone_number=phone_number).exists():
+            return Response({'success': False, 'error': 'Phone number already registered'}, status=400)
+            
+        use_phone_verification = getattr(settings, 'ENABLE_PHONE_VERIFICATION', False)
+        
+        if use_phone_verification:
+            if not phone_number:
+                return Response({'success': False, 'error': 'Phone number is required for verification'}, status=400)
+            
+            # Store all registration data JSON-encoded to create user later
+            reg_data = {
+                'username': username,
+                'email': email,
+                'password': password,
+                'name': name,
+                'lastname': lastname,
+                'phone_number': phone_number
+            }
+            
+            # Delete any existing registration tokens for this phone
+            PhoneVerificationToken.objects.filter(phone_number=phone_number, user=None).delete()
+            
+            # Create token with registration data
+            token_obj = PhoneVerificationToken.objects.create(
+                phone_number=phone_number,
+                registration_data=json.dumps(reg_data)
+            )
+            
+            # Twilio Send
+            twilio_sid = getattr(settings, 'TWILIO_ACCOUNT_SID', None)
+            twilio_token = getattr(settings, 'TWILIO_AUTH_TOKEN', None)
+            twilio_from = getattr(settings, 'TWILIO_FROM_NUMBER', None)
+            
+            if twilio_sid and twilio_token and twilio_from:
+                try:
+                    from twilio.rest import Client
+                    client = Client(twilio_sid, twilio_token)
+                    client.messages.create(
+                        body=f"Your Odnix verification code is: {token_obj.token}",
+                        from_=twilio_from,
+                        to=phone_number
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send Twilio SMS: {e}")
+                    print(f"MOCK TWILIO: Verification code for {phone_number} is {token_obj.token}")
+            else:
+                print(f"MOCK TWILIO: Verification code for {phone_number} is {token_obj.token}")
+
+            return Response({
+                'success': True,
+                'requires_otp': True,
+                'phone_number': phone_number,
+                'message': 'OTP sent to mobile number. Your account will be created upon verification.'
+            })
+
+        # Regular instant registration (if verification is OFF)
         with transaction.atomic():
             user = CustomUser(
                 username=username,
                 email=email,
                 name=name,
                 lastname=lastname,
-                is_email_verified=True # Auto-verify for simplicity via API
+                phone_number=phone_number if phone_number else None,
+                is_email_verified=True,
+                is_phone_verified=True
             )
             user.set_password(password)
             user.save()
             
-            # Return token directly
             user = authenticate(username=username, password=password)
             if user is not None:
-                user.mark_online()
-                
-                try:
-                    token_obj, _ = Token.objects.get_or_create(user=user)
-                    auth_token = token_obj.key
-                except Exception:
-                    auth_token = None
-                    
-                if not auth_token:
-                    return Response({
-                        'success': False,
-                        'error': 'Token generation failed'
-                    }, status=500)
-                    
+                token_obj, _ = Token.objects.get_or_create(user=user)
                 return Response({
                     'success': True,
-                    'auth_token': auth_token,
+                    'auth_token': token_obj.key,
                     'user': {
                         'id': user.id,
                         'username': user.username,
                         'email': user.email,
-                        'name': user.name,
-                        'lastname': user.lastname,
-                        'full_name': user.full_name,
-                        'profile_picture': user.profile_picture.url if user.profile_picture else '',
-                        'profile_picture_url': user.profile_picture_url,
-                        'is_verified': user.is_verified,
-                        'is_private': user.is_private,
-                        'is_online': True,
                     }
                 })
             else:
-                return Response({
-                    'success': False,
-                    'error': 'Failed to authenticate after registration'
-                }, status=500)
-                
+                return Response({'success': False, 'error': 'Registration successful but login failed'}, status=500)
     except Exception as e:
         return Response({'success': False, 'error': str(e)}, status=500)
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def api_verify_phone_otp(request):
+    """Verify phone OTP for mobile users. Creates the user if verification is successful."""
+    try:
+        data = request.data
+        user_id = data.get('user_id')
+        phone_number = data.get('phone_number')
+        otp = data.get('otp')
+
+        if not otp:
+            return Response({'success': False, 'error': 'OTP is required'}, status=400)
+
+        # Find the token by User ID or Phone Number
+        if user_id:
+            token_obj = PhoneVerificationToken.objects.filter(
+                user_id=user_id, token=otp, is_used=False).first()
+        elif phone_number:
+            token_obj = PhoneVerificationToken.objects.filter(
+                phone_number=phone_number, token=otp, is_used=False).first()
+        else:
+            return Response({'success': False, 'error': 'user_id or phone_number is required'}, status=400)
+
+        if not token_obj or token_obj.is_expired:
+            return Response({'success': False, 'error': 'Invalid or expired OTP'}, status=400)
+
+        with transaction.atomic():
+            # If the token contains registration data, create the user NOW
+            if token_obj.registration_data:
+                reg_data = json.loads(token_obj.registration_data)
+                
+                # Check if someone else took the username or email while waiting
+                if CustomUser.objects.filter(username=reg_data['username']).exists():
+                    return Response({'success': False, 'error': 'Username already taken'}, status=400)
+                if CustomUser.objects.filter(email=reg_data['email']).exists():
+                    return Response({'success': False, 'error': 'Email already registered'}, status=400)
+
+                user = CustomUser(
+                    username=reg_data['username'],
+                    email=reg_data['email'],
+                    name=reg_data['name'],
+                    lastname=reg_data['lastname'],
+                    phone_number=reg_data['phone_number'],
+                    is_email_verified=True,
+                    is_phone_verified=True
+                )
+                user.set_password(reg_data['password'])
+                user.save()
+            else:
+                # Verifying an already existing user (post-registration flow)
+                user = token_obj.user
+                if user:
+                    user.is_phone_verified = True
+                    user.save()
+                else:
+                    return Response({'success': False, 'error': 'No user found for this token'}, status=400)
+
+            # Mark token as used
+            token_obj.is_used = True
+            token_obj.save()
+
+            # Log the user in
+            auth_token, _ = Token.objects.get_or_create(user=user)
+            user.mark_online()
+
+            return Response({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'phone_number': user.phone_number,
+                },
+                'auth_token': auth_token.key
+            })
+    except Exception as e:
+        logger.error(f"OTP verification error: {e}")
+        return Response({'success': False, 'error': str(e)}, status=500)
+
 
 
 from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes

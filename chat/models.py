@@ -60,11 +60,13 @@ class CustomUser(AbstractUser):
     name = models.CharField(max_length=50)
     lastname = models.CharField(max_length=50)
     email = models.EmailField(unique=True, null=True, blank=True)
+    phone_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     profile_picture = models.ImageField(
         upload_to='profile_pics/', blank=True, null=True)
     is_online = models.BooleanField(default=False)
     last_seen = models.DateTimeField(default=timezone.now)
     is_email_verified = models.BooleanField(default=False)
+    is_phone_verified = models.BooleanField(default=False)
     # Blue tick verification flag
     is_verified = models.BooleanField(default=False)
     is_private = models.BooleanField(default=False)  # Private account feature
@@ -795,7 +797,40 @@ class EmailVerificationToken(models.Model):
         return timezone.now() > self.expires_at
 
     def __str__(self):
-        return f"OTP for {self.user.email}: {self.token}"
+        if self.user:
+            return f"OTP for {self.user.username}: {self.token}"
+        return f"OTP for {self.phone_number}: {self.token}"
+
+
+class PhoneVerificationToken(models.Model):
+    """Model for phone verification tokens (OTP)"""
+    user = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE, related_name='phone_verification_tokens', null=True, blank=True)
+    phone_number = models.CharField(max_length=20, null=True, blank=True)
+    registration_data = models.TextField(null=True, blank=True) # JSON encoded data to store registration info
+    token = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def save(self, *args, **kwargs):
+        if not self.token:
+            # Generate 6-digit OTP
+            import random
+            self.token = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+        if not self.expires_at:
+            # OTP expires in 10 minutes
+            self.expires_at = timezone.now() + timezone.timedelta(minutes=10)
+        super().save(*args, **kwargs)
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        if self.user:
+            return f"OTP for user {self.user.username}: {self.token}"
+        return f"OTP for {self.phone_number}: {self.token}"
 
 
 class EmojiSet(models.Model):
@@ -1100,6 +1135,8 @@ class OmzoComment(models.Model):
         CustomUser, on_delete=models.CASCADE, related_name='omzo_comments')
     content = models.TextField(max_length=500)
     created_at = models.DateTimeField(auto_now_add=True)
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
 
 
 class OmzoReport(models.Model):

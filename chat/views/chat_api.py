@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from chat.encryption import decrypt_text
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +103,13 @@ def get_chat_details_api(request, chat_id):
             reply_sender_name = msg.reply_to.sender.full_name if msg.reply_to.sender else 'System'
             reply_to_data = {
                 'id': msg.reply_to.id,
-                'content': msg.reply_to.content,
+                'content': decrypt_text(msg.reply_to.content),
                 'sender_name': reply_sender_name
             }
 
         messages_data.append({
             'id': msg.id,
-            'content': msg.content,
+            'content': decrypt_text(msg.content),
             'sender': {
                 'id': msg.sender_id,
                 'username': sender_username,
