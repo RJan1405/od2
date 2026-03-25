@@ -23,6 +23,8 @@ urlpatterns = [
     path('api/login/', api_auth.api_login, name='api_login'),
     path('api/logout/', api_auth.api_logout, name='api_logout'),
     path('api/register/', api_auth.api_register, name='api_register'),
+    path('api/check-availability/', api_auth.api_check_availability, name='api_check_availability'),
+    path('api/firebase-register/', api_auth.api_firebase_register, name='api_firebase_register'),
     path('api/verify-phone-otp/', api_auth.api_verify_phone_otp, name='api_verify_phone_otp'),
     path('api/profile/', api_auth.api_profile, name='api_profile'),
     path('api/profile/<str:username>/',

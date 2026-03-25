@@ -1,17 +1,147 @@
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.conf import settings
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ..models import CustomUser, PhoneVerificationToken
-import logging
-import json
-
-logger = logging.getLogger(__name__)
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from channels.db import database_sync_to_async
+from rest_framework.parsers import MultiPartParser, JSONParser, FormParser
+
+import logging
+import json
+import os
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
+
+logger = logging.getLogger(__name__)
+
+# Initialize Firebase Admin only if not already initialized
+if not firebase_admin._apps:
+    try:
+        fb_cred = getattr(settings, 'FIREBASE_CREDENTIALS', None)
+        if fb_cred:
+            # credentials.Certificate handles both a dict (JSON) and a string (File Path)
+            cred = credentials.Certificate(fb_cred)
+            firebase_admin.initialize_app(cred)
+            logger.info("FIREBASE: Admin SDK initialized successfully.")
+        else:
+            logger.warning("FIREBASE Warning: FIREBASE_CREDENTIALS not found in settings.")
+    except Exception as e:
+        logger.error(f"FIREBASE Error: Failed to initialize Admin SDK: {e}")
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def api_check_availability(request):
+    """
+    Check if username, email, or phone number is already registered.
+    """
+    data = request.data
+    username = data.get('username')
+    email = data.get('email')
+    phone_number = data.get('phone_number')
+
+    if username and CustomUser.objects.filter(username=username).exists():
+        return Response({'success': False, 'error': 'Username already exists'}, status=400)
+
+    if email and CustomUser.objects.filter(email=email).exists():
+        return Response({'success': False, 'error': 'Email already exists'}, status=400)
+
+    if phone_number and CustomUser.objects.filter(phone_number=phone_number).exists():
+        return Response({'success': False, 'error': 'Phone number already registered'}, status=400)
+
+    return Response({'success': True})
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def api_firebase_register(request):
+    """
+    Verify Firebase IdToken and create user.
+    Called from mobile app after Firebase verifies the SMS.
+    """
+    try:
+        data = request.data
+        id_token = data.get('idToken')
+        reg_data = data.get('registrationData') # JSON object with user details
+
+        if not id_token or not reg_data:
+            return Response({'success': False, 'error': 'idToken and registrationData are required'}, status=400)
+
+        # 1. Verification Bypass Logic
+        use_phone_verification = getattr(settings, 'ENABLE_PHONE_VERIFICATION', True)
+        
+        if not use_phone_verification:
+            # If set to False, we skip Firebase handshake and trust reg_data
+            logger.info("BYPASS: OTP verification skipped via settings. Using provided phone number.")
+            firebase_phone = reg_data.get('phone_number')
+            if not firebase_phone:
+                return Response({'success': False, 'error': 'Phone number is required in registrationData for bypass'}, status=400)
+        else:
+            # Standard Secure Mode: Verify the token with Firebase
+            try:
+                # Allow for clock skew (up to 60 seconds) to prevent "token used too early" errors
+                decoded_token = firebase_auth.verify_id_token(id_token, clock_skew_seconds=60)
+                firebase_phone = decoded_token.get('phone_number')
+                
+                if not firebase_phone:
+                    return Response({'success': False, 'error': 'Could not extract phone number from token'}, status=400)
+            except Exception as e:
+                logger.error(f"Firebase Token Verification Failed: {e}")
+                return Response({'success': False, 'error': f'Invalid Firebase token: {str(e)}'}, status=401)
+
+        # 2. Extract registration details
+        username = reg_data.get('username')
+        email = reg_data.get('email')
+        password = reg_data.get('password')
+        name = reg_data.get('name', '')
+        lastname = reg_data.get('lastname', '')
+        
+        # 3. Validation
+        if not username or not email or not password:
+            return Response({'success': False, 'error': 'Incomplete registration data'}, status=400)
+
+        if CustomUser.objects.filter(username=username).exists():
+            return Response({'success': False, 'error': 'Username already exists'}, status=400)
+
+        if CustomUser.objects.filter(email=email).exists():
+            return Response({'success': False, 'error': 'Email already exists'}, status=400)
+
+        # 4. Create User
+        with transaction.atomic():
+            user = CustomUser(
+                username=username,
+                email=email,
+                name=name,
+                lastname=lastname,
+                phone_number=firebase_phone,
+                is_phone_verified=True,
+                is_email_verified=True
+            )
+            user.set_password(password)
+            user.save()
+
+            # Generate DRF Token
+            token_obj, _ = Token.objects.get_or_create(user=user)
+            user.mark_online()
+
+            return Response({
+                'success': True,
+                'auth_token': token_obj.key,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'phone_number': user.phone_number
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"Firebase Registration Error: {e}")
+        return Response({'success': False, 'error': str(e)}, status=500)
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -146,25 +276,9 @@ def api_register(request):
                 registration_data=json.dumps(reg_data)
             )
             
-            # Twilio Send
-            twilio_sid = getattr(settings, 'TWILIO_ACCOUNT_SID', None)
-            twilio_token = getattr(settings, 'TWILIO_AUTH_TOKEN', None)
-            twilio_from = getattr(settings, 'TWILIO_FROM_NUMBER', None)
-            
-            if twilio_sid and twilio_token and twilio_from:
-                try:
-                    from twilio.rest import Client
-                    client = Client(twilio_sid, twilio_token)
-                    client.messages.create(
-                        body=f"Your Odnix verification code is: {token_obj.token}",
-                        from_=twilio_from,
-                        to=phone_number
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send Twilio SMS: {e}")
-                    print(f"MOCK TWILIO: Verification code for {phone_number} is {token_obj.token}")
-            else:
-                print(f"MOCK TWILIO: Verification code for {phone_number} is {token_obj.token}")
+            # Twilio has been removed as Firebase is now the primary SMS provider.
+            # We just print the code here for legacy compatibility or staging use cases.
+            print(f"VERIFICATION SMS (Twilio Removed): Verification code for {phone_number} is {token_obj.token}")
 
             return Response({
                 'success': True,
@@ -285,10 +399,6 @@ def api_verify_phone_otp(request):
 
 
 
-from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
-from rest_framework.authentication import TokenAuthentication
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
 
 @api_view(["GET", "POST"])
 @authentication_classes([TokenAuthentication])

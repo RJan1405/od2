@@ -322,13 +322,25 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 # For development/testing - uncomment to see emails in console
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# TWILIO CONFIGURATION for Phone Verification
-# Toggle this to True in production to enable real SMS verification
-# Hardcode it to True temporarily for testing
-ENABLE_PHONE_VERIFICATION = False  # os.environ.get('ENABLE_PHONE_VERIFICATION', 'False') == 'True'
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
-TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
+# PHONE VERIFICATION CONFIGURATION
+# Set to True to require phone verification (Now using Firebase instead of Twilio)
+ENABLE_PHONE_VERIFICATION = True
+# Twilio keys removed as requested
+
+# FIREBASE CONFIGURATION (Production Safe)
+ENABLE_FIREBASE_AUTH = True
+
+# We can load credentials from an environment variable (JSON string) for production (Render/AWS/etc.)
+# or from a local file for development.
+FIREBASE_CRED_JSON = os.getenv("FIREBASE_CREDENTIALS")
+if FIREBASE_CRED_JSON:
+    try:
+        import json
+        FIREBASE_CREDENTIALS = json.loads(FIREBASE_CRED_JSON)
+    except Exception:
+        FIREBASE_CREDENTIALS = os.path.join(BASE_DIR, 'firebase-service-account.json')
+else:
+    FIREBASE_CREDENTIALS = os.path.join(BASE_DIR, 'firebase-service-account.json')
 
 # Session settings
 SESSION_COOKIE_AGE = 86400  # 1 day

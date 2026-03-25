@@ -1,6 +1,10 @@
 # Secrets
 .env
 *.env.local
+firebase-service-account.json
+credentials.json
+google-services.json
+GoogleService-Info.plist
 
 # Media and DB
 media/
