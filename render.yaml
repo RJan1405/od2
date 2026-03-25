@@ -11,5 +11,11 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
+      - key: DB_ENCRYPTION_KEY
+        generateValue: true
+      - key: FIREBASE_CREDENTIALS
+        sync: false
+      - key: ENABLE_PHONE_VERIFICATION
+        value: "True"
       - key: DEBUG
         value: "False"
