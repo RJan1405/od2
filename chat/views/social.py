@@ -1082,6 +1082,52 @@ def delete_post(request):
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+def delete_omzo(request):
+    """Delete a user's own omzo video"""
+    try:
+        data = request.data
+        omzo_id = data.get('omzo_id')
+
+        if not omzo_id:
+            return Response({'success': False, 'error': 'Omzo ID is required'})
+
+        try:
+            omzo = Omzo.objects.get(id=omzo_id)
+        except Omzo.DoesNotExist:
+            return Response({'success': False, 'error': 'Omzo not found'})
+
+        # Only allow owner to delete
+        if omzo.user != request.user:
+            return Response({'success': False, 'error': 'You can only delete your own videos'})
+
+        # Delete files from storage
+        if omzo.video_file:
+            try:
+                omzo.video_file.delete(save=False)
+            except Exception:
+                pass
+        
+        if omzo.thumbnail:
+            try:
+                omzo.thumbnail.delete(save=False)
+            except Exception:
+                pass
+
+        omzo.delete()
+
+        return Response({
+            'success': True,
+            'message': 'Omzo deleted successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"Error in delete_omzo: {str(e)}")
+        return Response({'success': False, 'error': 'Failed to delete video'})
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 def report_post(request):
     """Report a post for inappropriate content"""
     try:

@@ -286,6 +286,7 @@ urlpatterns = [
          views.get_omzo_comments, name='get_omzo_comments'),
     path('api/omzo/comment/', views.add_omzo_comment, name='add_omzo_comment'),
     path('api/omzo/report/', views.report_omzo, name='report_omzo'),
+    path('api/omzo/delete/', views.delete_omzo, name='delete_omzo'),
     path('api/omzo/<int:omzo_id>/details/',
          views.get_omzo_detail, name='get_omzo_detail'),
 

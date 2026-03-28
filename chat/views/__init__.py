@@ -36,6 +36,7 @@ from .social import (
     track_omzo_view, report_omzo, toggle_private_chat,
     toggle_save_scribe, toggle_save_omzo, get_saved_items,
     api_repost,
+    delete_omzo,
 )
 from .stories import (
     create_story, view_story, get_user_stories, get_following_stories, mark_story_viewed,
