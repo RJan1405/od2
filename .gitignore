@@ -49,3 +49,96 @@ frontend/node_modules/
 odnix-mobile/
 dist/
 build/
+
+
+
+
+# ========================
+# 🔐 Secrets / Environment
+# ========================
+.env
+.env.*
+!*.env.example
+
+# ========================
+# 🐍 Python / Django
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database
+db.sqlite3
+*.sqlite3
+
+# Logs
+*.log
+django_errors.log
+
+# Django static/media
+staticfiles/
+static_root/
+media/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ========================
+# ⚛️ Node / Frontend
+# ========================
+node_modules/
+dist/
+build/
+frontend/dist/
+
+# ========================
+# 🧪 Temporary / Debug Files
+# ========================
+*.txt
+*.out
+*.pid
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ========================
+# 📄 Docs (Selective Ignore)
+# ========================
+# Ignore temp or personal docs only
+notes.md
+todo.md
+draft*.md
+
+# ========================
+# 💻 OS / Editor
+# ========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ========================
+# 🔐 Certificates / Keys
+# ========================
+*.pem
+*.key
+*.crt
+certs/
+
+# ========================
+# 📦 Archives / Backups
+# ========================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ========================
+# ⚙️ Misc / Project Specific
+# ========================
+odnix-mobile/
