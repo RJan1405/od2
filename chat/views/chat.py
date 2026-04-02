@@ -643,7 +643,7 @@ def get_chat_messages(request, chat_id):
         'shared_scribe__user',
         'shared_omzo',
         'shared_omzo__user'
-    ).order_by('timestamp')
+    ).exclude(deletions__user=request.user).order_by('timestamp')
 
     # Filter by message ID (preferred method to avoid duplicates)
     if after_id:
@@ -687,7 +687,7 @@ def get_chat_messages(request, chat_id):
             'media_filename': msg.media_filename,
             'reply_to': {
                 'id': msg.reply_to.id if msg.reply_to else None,
-                'content': msg.reply_to.content if msg.reply_to else None,
+                'content': decrypt_text(msg.reply_to.content) if msg.reply_to else None,
                 'sender_name': msg.reply_to.sender.full_name if msg.reply_to else None,
             } if msg.reply_to else None,
             'story_reply': {

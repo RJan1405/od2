@@ -76,7 +76,7 @@ def get_chat_details_api(request, chat_id):
     # But for now, let's iterate.
     
     # Re-query with select_related for performance
-    messages_qs = chat.messages.select_related('sender', 'reply_to', 'reply_to__sender').prefetch_related('read_receipts').order_by('timestamp')
+    messages_qs = chat.messages.select_related('sender', 'reply_to', 'reply_to__sender').prefetch_related('read_receipts').exclude(deletions__user=user).order_by('timestamp')
     
     for msg in messages_qs:
         sender_name = 'System'
