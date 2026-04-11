@@ -26,7 +26,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.chat_id = self.scope["url_route"]["kwargs"]["chat_id"]
         self.group_name = f"chat_{self.chat_id}"
         self.user = self.scope["user"]
-        
+
         # Initialize typing users set for this chat if not exists
         if self.chat_id not in ChatConsumer._typing_users:
             ChatConsumer._typing_users[self.chat_id] = set()
@@ -44,10 +44,18 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             self.group_name,
             self.channel_name
         )
+
+        await self.channel_layer.group_add(
+            f"user_{self.user.id}",
+            self.channel_name
+        )
+
         await self.accept()
+        await self.update_user_status(True)
 
     # ---------------- DISCONNECT ----------------
     async def disconnect(self, close_code):
+        await self.update_user_status(False)
         # Only attempt to discard if group_name was set during connect
         if hasattr(self, 'group_name') and self.group_name:
             try:
@@ -55,8 +63,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     self.group_name,
                     self.channel_name
                 )
+                await self.channel_layer.group_discard(
+                    f"user_{self.user.id}",
+                    self.channel_name
+                )
             except Exception:
-                logger.exception("Error during group_discard in ChatConsumer.disconnect")
+                logger.exception(
+                    "Error during group_discard in ChatConsumer.disconnect")
 
         # Remove user from typing set on disconnect
         if self.chat_id in ChatConsumer._typing_users:
@@ -90,7 +103,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         exclude_sender_id = event.get("exclude_sender_id")
         if exclude_sender_id is not None and exclude_sender_id == self.user.id:
             return
-        
+
         # Send with frontend-expected type
         await self.send_json({
             "type": "message.new",
@@ -135,7 +148,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
     async def typing_update(self, event):
         # Filter out current user from typing users (don't show own typing indicator)
-        users = [u for u in event.get("users", []) if u.get("id") != self.user.id]
+        users = [u for u in event.get(
+            "users", []) if u.get("id") != self.user.id]
         # Send with frontend-expected type
         await self.send_json({
             "type": "typing.update",
@@ -143,33 +157,20 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def p2p_signal(self, event):
-        # Send P2P signals (file transfer requests, WebRTC signaling)
-        # Only send to the target user or to all if no specific target
-        target_user_id = event.get("target_user_id")
-        sender_id = event.get("sender_id")
-        
+        # Send P2P signals directly to the frontend via WebSocket
+
         # Don't send the signal back to the sender
+        sender_id = event.get("sender_id")
         if sender_id == self.user.id:
             return
-        
-        # If there's a specific target, only send to that user
-        if target_user_id is not None:
-            try:
-                if int(target_user_id) != self.user.id:
-                    return
-            except (ValueError, TypeError):
-                if target_user_id != self.user.id:
-                    return
-        
-        logger.info(f"P2P signal delivered via WS: {event.get('signal', {}).get('type', 'unknown')} to user {self.user.id}")
-        
+
+        logger.info(
+            f"P2P signal delivered via WS: {event.get('signal', {}).get('type', 'unknown')} to user {self.user.id}")
+
         await self.send_json({
             "type": "p2p.signal",
             "signal": event["signal"],
-            "sender_id": sender_id,
-            "sender_name": event.get("sender_name", ""),    # Optional: may not be set from HTTP view
-            "sender_avatar": event.get("sender_avatar"),
-            "target_user_id": target_user_id
+            "sender_id": sender_id
         })
 
     # ---------------- HANDLERS ----------------
@@ -197,10 +198,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         # Send push notification to other participants
         await self.send_message_notification(content)
-        
+
         # Notify recipients about new chat if this is the first message
         await self.notify_new_chat_if_needed(content)
-        
+
         # Update sidebar for all recipients (real-time message preview update)
         await self.notify_sidebar_update(content)
 
@@ -208,7 +209,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         # Ensure typing users set exists for this chat
         if self.chat_id not in ChatConsumer._typing_users:
             ChatConsumer._typing_users[self.chat_id] = set()
-        
+
         if data.get("is_typing"):
             ChatConsumer._typing_users[self.chat_id].add(self.user.id)
         else:
@@ -266,69 +267,22 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         )
 
     async def handle_p2p_signal(self, data):
-        """Handle P2P signaling for file transfers via WebSocket.
-        
-        IMPORTANT: Also saves signal to DB so HTTP-polling clients (mobile)
-        can pick it up via getP2PSignals API.
-        """
+        """Handle P2P signaling for WebRTC calls and file transfers via WebSocket."""
         signal_data = data.get("signal")
         target_user_id = data.get("target_user_id")
-        
-        if not signal_data:
+
+        if not signal_data or not target_user_id:
             return
-        
-        # Get sender info
-        sender_avatar = None
-        if hasattr(self.user, 'profile_picture_url'):
-            sender_avatar = self.user.profile_picture_url
-        
-        # 1. Broadcast in real-time to WebSocket clients in this chat group
+
+        # 1. Direct user-to-user signaling delivery
         await self.channel_layer.group_send(
-            self.group_name,
+            f"user_{target_user_id}",
             {
                 "type": "p2p_signal",
                 "signal": signal_data,
                 "sender_id": self.user.id,
-                "sender_name": self.user.full_name,
-                "sender_avatar": sender_avatar,
-                "target_user_id": target_user_id
             }
         )
-        
-        # 2. ALSO persist to DB so HTTP-polling clients (mobile) can receive it
-        await self.save_p2p_signal_to_db(signal_data, target_user_id)
-
-    @database_sync_to_async
-    def save_p2p_signal_to_db(self, signal_data, target_user_id):
-        """Save a P2P signal to the database for HTTP-polling clients (e.g. mobile)."""
-        try:
-            from chat.models import P2PSignal
-            chat = Chat.objects.get(id=self.chat_id)
-            
-            if target_user_id:
-                target_user = chat.participants.filter(id=target_user_id).first()
-                if target_user:
-                    P2PSignal.objects.create(
-                        chat=chat,
-                        sender=self.user,
-                        target_user=target_user,
-                        signal_data=signal_data
-                    )
-                    logger.info(
-                        f"P2P signal saved to DB for polling: {signal_data.get('type', '?')} "
-                        f"from {self.user.id} to {target_user_id}"
-                    )
-            else:
-                # Broadcast to all other participants
-                for participant in chat.participants.exclude(id=self.user.id):
-                    P2PSignal.objects.create(
-                        chat=chat,
-                        sender=self.user,
-                        target_user=participant,
-                        signal_data=signal_data
-                    )
-        except Exception as e:
-            logger.warning(f"Could not save P2P signal to DB: {e}")
 
     # ---------------- DATABASE ----------------
     @database_sync_to_async
@@ -412,14 +366,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def send_message_notification(self, content):
         """Send push notification to other chat participants about new message"""
         participant_ids = await self.get_other_participants()
-        
+
         sender_avatar = None
         if hasattr(self.user, 'profile_picture') and self.user.profile_picture:
             sender_avatar = self.user.profile_picture.url
-        
+
         # Truncate message preview
         preview = content[:100] + '...' if len(content) > 100 else content
-        
+
         for participant_id in participant_ids:
             await self.channel_layer.group_send(
                 f'user_notify_{participant_id}',
@@ -449,13 +403,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         chat_info = await self.get_chat_info_for_notification()
         if not chat_info:
             return
-            
+
         participant_ids = await self.get_other_participants()
-        
+
         for participant_id in participant_ids:
             # Check if participant has accepted this chat
             is_accepted = await self.check_chat_acceptance(participant_id)
-            
+
             # Send new_chat notification to sidebar
             await self.channel_layer.group_send(
                 f'sidebar_{participant_id}',
@@ -465,7 +419,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     'is_request': not is_accepted,  # It's a request if not accepted
                 }
             )
-            
+
             # Also update request count if it's a new request
             if not is_accepted:
                 count = await self.get_pending_request_count(participant_id)
@@ -484,11 +438,11 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             chat = Chat.objects.get(id=self.chat_id)
             if chat.chat_type != 'private':
                 return None
-                
+
             other_user = chat.participants.exclude(id=self.user.id).first()
             if not other_user:
                 return None
-                
+
             last_msg = chat.messages.order_by('-timestamp').first()
             last_message = ''
             if last_msg:
@@ -496,8 +450,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     last_message = '📷 Sent a file'
                 else:
                     decrypted_content = decrypt_text(last_msg.content)
-                    last_message = decrypted_content[:50] + ('...' if len(decrypted_content) > 50 else '')
-            
+                    last_message = decrypted_content[:50] + \
+                        ('...' if len(decrypted_content) > 50 else '')
+
             return {
                 'id': chat.id,
                 'type': 'private',
@@ -529,12 +484,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             accepted_chat_ids = ChatAcceptance.objects.filter(
                 user=user
             ).values_list('chat_id', flat=True)
-            
+
             pending_chats = Chat.objects.filter(
                 participants=user,
                 chat_type='private'
             ).exclude(id__in=accepted_chat_ids)
-            
+
             count = 0
             for chat in pending_chats:
                 other_user = chat.participants.exclude(id=user_id).first()
@@ -547,13 +502,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def notify_sidebar_update(self, content):
         """Send sidebar_update to all recipients for real-time message preview updates"""
         participant_ids = await self.get_other_participants()
-        
+
         for participant_id in participant_ids:
             unread_count = await self.get_unread_count_for_user(participant_id)
-            
+
             # Truncate message preview
             preview = content[:50] + ('...' if len(content) > 50 else '')
-            
+
             await self.channel_layer.group_send(
                 f'sidebar_{participant_id}',
                 {
@@ -588,371 +543,20 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         except Chat.DoesNotExist:
             return []
 
-
-class CallConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
+    @database_sync_to_async
+    def update_user_status(self, is_online):
+        """Update user online status in database"""
         try:
-            self.chat_id = self.scope['url_route']['kwargs']['chat_id']
-            self.room_group_name = f'call_{self.chat_id}'
-            self.user = self.scope.get('user')
-
-            logger.info(
-                f"[CallConsumer] Connect attempt - chat_id={self.chat_id}, user={self.user.id if self.user and hasattr(self.user, 'is_authenticated') and self.user.is_authenticated else 'anonymous'}")
-
-            self.proto = OdnixSecurity()
-            self.handshake_complete = False
-
-            # Accept connection for now - we'll validate auth if needed
-            await self.channel_layer.group_add(
-                self.room_group_name,
-                self.channel_name
-            )
-            await self.accept()
-            logger.info(
-                f"[CallConsumer] WebSocket accepted for user {self.user.id if self.user and hasattr(self.user, 'is_authenticated') and self.user.is_authenticated else 'unauthenticated'}")
+            if self.user and self.user.is_authenticated:
+                # Use User already imported at top
+                user = User.objects.get(id=self.user.id)
+                user.is_online = is_online
+                user.last_seen = timezone.now()
+                user.save(update_fields=['is_online', 'last_seen'])
+                logger.debug(
+                    f"[Chat] User {user.id} marked {'online' if is_online else 'offline'}")
         except Exception as e:
-            logger.error(
-                f"[CallConsumer] Error in connect: {e}", exc_info=True)
-            try:
-                await self.close()
-            except:
-                pass
-
-    async def receive(self, text_data=None, bytes_data=None):
-        # Add comprehensive logging at the start
-        logger.info(f"[CallConsumer] ===== RECEIVE CALLED =====")
-        logger.info(f"[CallConsumer] User: {self.user.id if self.user and hasattr(self.user, 'id') else 'unknown'}")
-        logger.info(f"[CallConsumer] Text data length: {len(text_data) if text_data else 0}")
-        logger.info(f"[CallConsumer] First 200 chars: {text_data[:200] if text_data else 'None'}")
-        
-        if text_data:
-            try:
-                # Attempt JSON parse for Handshake
-                try:
-                    data = json.loads(text_data)
-                    is_json = True
-                    logger.info(f"[CallConsumer] ✓ Parsed JSON, type: {data.get('type')}")
-                except json.JSONDecodeError:
-                    is_json = False
-                    logger.warning(
-                        f"[CallConsumer] Failed to parse JSON: {text_data[:100]}")
-
-                # --- Handshake Step 1: Request DH Params ---
-                if is_json and data.get('type') == 'req_dh_params':
-                    try:
-                        logger.info(
-                            f"[CallConsumer] Received req_dh_params from user {self.user.id if self.user else 'unknown'}")
-                        client_nonce = data.get('nonce') or []
-
-                        # Generate Server Params
-                        dh_config = self.proto.create_dh_config()
-                        logger.info(
-                            f"[CallConsumer] DH config created, prime length: {len(str(dh_config['prime']))}")
-
-                        import base64
-                        server_nonce_b64 = dh_config.get('server_nonce')
-                        server_nonce_bytes = base64.b64decode(
-                            server_nonce_b64) if server_nonce_b64 else b''
-
-                        response = {
-                            'type': 'res_dh_params',
-                            'nonce': client_nonce,
-                            'server_nonce': list(server_nonce_bytes),
-                            # Ensure it's a string for JSON
-                            'p': str(dh_config['prime']),
-                            'g': int(dh_config['g']),  # Ensure it's an integer
-                        }
-                        response_json = json.dumps(response)
-                        logger.info(
-                            f"[CallConsumer] Sending res_dh_params (size: {len(response_json)} bytes)")
-                        logger.debug(
-                            f"[CallConsumer] Response preview: {response_json[:200]}...")
-                        await self.send(text_data=response_json)
-                        logger.info(
-                            f"[CallConsumer] res_dh_params sent successfully")
-                        return
-                    except Exception as e:
-                        logger.error(
-                            f"[CallConsumer] Error handling req_dh_params: {e}", exc_info=True)
-                        try:
-                            error_response = json.dumps({
-                                'type': 'error',
-                                'message': f'Handshake error: {str(e)}'
-                            })
-                            await self.send(text_data=error_response)
-                            logger.info(
-                                f"[CallConsumer] Sent error response to client")
-                        except Exception as send_err:
-                            logger.error(
-                                f"[CallConsumer] Failed to send error response: {send_err}")
-                        return
-
-                # --- Handshake Step 2: Set Client DH Params ---
-                if is_json and data.get('type') == 'set_client_dh_params':
-                    try:
-                        logger.info(
-                            f"[CallConsumer] Received set_client_dh_params from user {self.user.id}")
-                        # Client sends: type, nonce, server_nonce, gb (hex string)
-                        client_pub_hex = data.get('gb')
-
-                        if not client_pub_hex:
-                            raise ValueError(
-                                "Missing 'gb' (client public key) in set_client_dh_params")
-
-                        from Crypto.Util import number
-                        # Re-derive Prime/G
-                        prime = DH_PRIME
-                        g = DH_G
-
-                        # Generate Server Private
-                        server_priv = number.getRandomRange(1, prime - 1)
-                        # Generate Server Public (ga)
-                        server_pub = pow(g, server_priv, prime)
-
-                        # Compute Shared Secret: client_pub ^ server_priv % p
-                        client_pub = int(client_pub_hex, 16)
-                        shared_secret = pow(client_pub, server_priv, prime)
-
-                        # Derive auth key (sha256 of shared secret bytes)
-                        import hashlib
-                        secret_bytes = number.long_to_bytes(shared_secret)
-                        self.proto.auth_key = hashlib.sha256(
-                            secret_bytes).digest()
-                        self.handshake_complete = True
-
-                        logger.info(
-                            f"[CallConsumer] Handshake complete, shared key established")
-
-                        # Send OK with Server Public Key
-                        response = {
-                            'type': 'dh_gen_ok',
-                            'nonce': data.get('nonce'),
-                            'server_nonce': data.get('server_nonce'),
-                            'ga': hex(server_pub)[2:]
-                        }
-                        logger.info(f"[CallConsumer] Sending dh_gen_ok")
-                        await self.send(text_data=json.dumps(response))
-                        logger.info(
-                            f"[CallConsumer] dh_gen_ok sent successfully")
-                        return
-                    except Exception as e:
-                        logger.error(
-                            f"[CallConsumer] Error handling set_client_dh_params: {e}", exc_info=True)
-                        await self.send(text_data=json.dumps({
-                            'type': 'error',
-                            'message': f'Handshake error at step 2: {str(e)}'
-                        }))
-                        return
-
-                # --- Encrypted Messages or Plaintext Fallback ---
-                if self.handshake_complete and self.proto.auth_key:
-                    # If we have a key, try to decrypt
-                    try:
-                        decrypted = self.proto.unwrap_message(text_data)
-                        if decrypted:
-                            logger.debug(
-                                f"[CallConsumer] Decrypted message type: {decrypted.get('type')}")
-                            # Handle signaling
-                            await self.handle_decrypted_signal(decrypted)
-                        else:
-                            logger.warning(
-                                f"[CallConsumer] Decryption returned None")
-                    except Exception as e:
-                        logger.error(
-                            f"[CallConsumer] Error decrypting message: {e}", exc_info=True)
-                else:
-                    # FALLBACK: Allow unencrypted WebRTC signaling for standard clients
-                    if is_json:
-                        msg_type = data.get('type')
-                        if msg_type and (msg_type.startswith('webrtc.') or msg_type == 'call.end'):
-                            if msg_type == 'webrtc.ice':
-                                logger.info(f"[CallConsumer] Received ICE Candidate from {self.scope['user'].id}")
-                            else:
-                                logger.info(f"[CallConsumer] Allowing unencrypted {msg_type} (handshake skipped)")
-                            await self.handle_decrypted_signal(data)
-                        else:
-                            logger.warning(
-                                f"[CallConsumer] Received JSON '{msg_type}' but handshake not complete")
-                    else:
-                        logger.warning(
-                            f"[CallConsumer] Received non-JSON data and handshake not complete")
-
-            except Exception as e:
-                logger.error(
-                    f"[CallConsumer] Unexpected error in receive: {e}", exc_info=True)
-
-    async def handle_decrypted_signal(self, payload):
-        # payload is the dict {type: '...', ...}
-        message_type = payload.get('type')
-
-        # Broadcast via NotifyConsumer if it's an Offer
-        if message_type == "webrtc.offer":
-            await self.send_call_notification(payload)
-            # Add caller info to the payload for the receiver
-            caller_name = getattr(self.user, 'full_name', None) or self.user.username
-            caller_avatar = None
-            if hasattr(self.user, 'profile_picture') and self.user.profile_picture:
-                try:
-                    caller_avatar = self.user.profile_picture.url
-                except:
-                    pass
-            payload['callerName'] = caller_name
-            payload['callerAvatar'] = caller_avatar
-
-        # ALWAYS store in database FIRST (for polling fallback - works even if WebSocket fails)
-        if message_type in ["webrtc.offer", "webrtc.answer", "webrtc.ice"]:
-            await self.store_signal_in_db(payload)
-            logger.info(
-                f"[CallConsumer] ✓ Stored {message_type} in DB for chat {self.chat_id}")
-
-        # Standard Signaling Forwarding via WebSocket
-        # Forward to the group so the other client receives it (if they're connected)
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'send_signal',
-                'original_sender_channel': self.channel_name,
-                'message': payload
-            }
-        )
-        logger.info(
-            f"[CallConsumer] ✓ Forwarded {message_type} to group {self.room_group_name} (chat {self.chat_id})")
-
-    @database_sync_to_async
-    def check_should_notify(self):
-        from chat.utils import should_send_call_notification
-        return should_send_call_notification(self.chat_id, self.user.id)
-
-    async def send_call_notification(self, payload):
-        """Send call notification to other participants immediately"""
-        try:
-            if not await self.check_should_notify():
-                logger.info(f"[CallConsumer] Skipped duplicate notify.call (debounced) for chat {self.chat_id}")
-                return
-
-            chat_id = self.chat_id
-            # Get caller details
-            caller_name = getattr(self.user, 'full_name', self.user.username)
-            caller_avatar = None
-            if hasattr(self.user, 'profile_picture') and self.user.profile_picture:
-                try:
-                    caller_avatar = self.user.profile_picture.url
-                except:
-                    pass
-
-            # Get others
-            others = await self.get_other_participants()
-            logger.info(f"[CallConsumer] Found {len(others)} other participants to notify: {others}")
-            for uid in others:
-                await self.channel_layer.group_send(
-                    f'user_notify_{uid}',
-                    {
-                        'type': 'notify.call',
-                        'from_user_id': self.user.id,
-                        'chat_id': chat_id,
-                        'audio_only': bool(payload.get('audioOnly', False)),
-                        'from_full_name': caller_name,
-                        'from_avatar': caller_avatar,
-                    }
-                )
-            logger.info(
-                f"[CallConsumer] ✓ Sent 'notify.call' events to {[f'user_notify_{uid}' for uid in others]} for chat {chat_id}")
-        except Exception as e:
-            logger.error(
-                f"[CallConsumer] Error sending call notification: {e}", exc_info=True)
-
-    @database_sync_to_async
-    def store_signal_in_db(self, payload):
-        """Store signaling data in database as fallback for server relay"""
-        try:
-            from chat.models import P2PSignal, Chat
-            chat = Chat.objects.get(id=self.chat_id)
-            others = list(chat.participants.exclude(
-                id=self.user.id).values_list('id', flat=True))
-
-            signal_type = payload.get('type', 'unknown') if isinstance(
-                payload, dict) else 'unknown'
-
-            # If it's an offer, clear ALL OLD unconsumed signals for this chat
-            if signal_type == 'webrtc.offer':
-                P2PSignal.objects.filter(chat=chat, is_consumed=False).update(is_consumed=True)
-                logger.info(f"[CallConsumer] Cleared stale signals for chat {self.chat_id} before new offer")
-
-            for target_user_id in others:
-                # Clean up old consumed signals first
-                P2PSignal.cleanup_old_signals()
-
-                # Create new signal
-                P2PSignal.objects.create(
-                    chat=chat,
-                    sender=self.user,
-                    target_user_id=target_user_id,
-                    signal_data=payload
-                )
-            logger.info(
-                f"[CallConsumer] ✓ Stored {signal_type} in DB for {len(others)} user(s) in chat {self.chat_id}")
-        except Exception as e:
-            logger.error(
-                f"[CallConsumer] Error storing signal in DB: {e}", exc_info=True)
-
-    async def send_signal(self, event):
-        # Don't echo back to sender
-        if event.get('original_sender_channel') == self.channel_name:
-            logger.debug(
-                f"[CallConsumer] Ignoring signal echo for {self.user.id if self.user else 'unknown'}")
-            return
-
-        # Forward the signaling message to other participants
-        message = event.get('message', {})
-        message_type = message.get('type', 'unknown') if isinstance(
-            message, dict) else 'unknown'
-
-        if self.handshake_complete and self.proto.auth_key:
-            try:
-                encrypted = self.proto.wrap_message(message)
-                await self.send(text_data=encrypted)
-                logger.info(
-                    f"[CallConsumer] ✓ Sent encrypted {message_type} to user {self.user.id if self.user else 'unknown'} via WebSocket")
-            except Exception as e:
-                logger.error(
-                    f"[CallConsumer] Error encrypting/sending signal {message_type}: {e}", exc_info=True)
-        else:
-            # SEND UNENCRYPTED
-            await self.send(text_data=json.dumps(message))
-            logger.info(
-                f"[CallConsumer] ✓ Sent PLAIN {message_type} to user (no handshake)")
-
-    async def signal_forward(self, event):
-        if event.get('from_user_id') == self.user.id:
-            return
-        await self.send_encrypted({
-            'type': event['event_type'],
-            'from_user_id': event['from_user_id'],
-            'payload': event['payload'],
-        })
-
-    async def send_encrypted(self, data):
-        if self.handshake_complete:
-            await self.send(text_data=self.proto.wrap_message(data))
-
-    @database_sync_to_async
-    def get_chat(self, chat_id):
-        try:
-            return Chat.objects.get(id=chat_id, participants=self.user)
-        except Chat.DoesNotExist:
-            return None
-
-    @database_sync_to_async
-    def get_other_participants(self, chat_id=None):
-        target_chat_id = chat_id or self.chat_id
-        try:
-            chat = Chat.objects.get(id=target_chat_id)
-            participants = list(chat.participants.exclude(id=self.user.id).values_list('id', flat=True))
-            logger.info(f"[CallConsumer] get_other_participants for chat {target_chat_id} (user {self.user.id}): {participants}")
-            return participants
-        except Chat.DoesNotExist:
-            logger.warning(f"[CallConsumer] get_other_participants: Chat {target_chat_id} does not exist")
-            return []
+            logger.error(f"Error updating user status in ChatConsumer: {e}")
 
 
 class NotifyConsumer(AsyncWebsocketConsumer):
@@ -966,7 +570,7 @@ class NotifyConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.user = self.scope.get('user')
-        
+
         # Fallback manual token check if middleware missed it
         if not self.user or not self.user.is_authenticated:
             from urllib.parse import parse_qs
@@ -979,29 +583,35 @@ class NotifyConsumer(AsyncWebsocketConsumer):
                 self.scope['user'] = self.user
 
         if not self.user or not self.user.is_authenticated:
-            logger.warning("[NotifyConsumer] Unauthenticated user attempted to connect")
+            logger.warning(
+                "[NotifyConsumer] Unauthenticated user attempted to connect")
             await self.close()
             return
-            
+
         self.group_name = f'user_notify_{self.user.id}'
-        logger.info(f"[NotifyConsumer] User {self.user.id} ({self.user.username}) connected to group {self.group_name}")
+        logger.info(
+            f"[NotifyConsumer] User {self.user.id} ({self.user.username}) connected to group {self.group_name}")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        await self.update_user_status(True)
 
     async def disconnect(self, close_code):
+        await self.update_user_status(False)
         # Guard against disconnect being called before connect finished
         if hasattr(self, 'group_name') and self.group_name:
             try:
                 await self.channel_layer.group_discard(self.group_name, self.channel_name)
             except Exception:
-                logger.exception("Error during group_discard in NotifyConsumer.disconnect")
+                logger.exception(
+                    "Error during group_discard in NotifyConsumer.disconnect")
 
     async def receive(self, text_data):
         return
 
     async def notify_call(self, event):
         """Handle incoming call notification"""
-        logger.info(f"[NotifyConsumer] Received notify_call event for user {self.user.id} from {event.get('from_user_id')}")
+        logger.info(
+            f"[NotifyConsumer] Received notify_call event for user {self.user.id} from {event.get('from_user_id')}")
         await self.send(text_data=json.dumps({
             'type': 'incoming.call',
             'from_user_id': event.get('from_user_id'),
@@ -1010,7 +620,8 @@ class NotifyConsumer(AsyncWebsocketConsumer):
             'from_full_name': event.get('from_full_name'),
             'from_avatar': event.get('from_avatar'),
         }))
-        logger.info(f"[NotifyConsumer] Sent 'incoming.call' to UI for user {self.user.id}")
+        logger.info(
+            f"[NotifyConsumer] Sent 'incoming.call' to UI for user {self.user.id}")
 
     async def notify_message(self, event):
         """Handle new message notification"""
@@ -1120,7 +731,22 @@ class NotifyConsumer(AsyncWebsocketConsumer):
             'timestamp': event.get('timestamp')
         }))
 
-
+    @database_sync_to_async
+    def update_user_status(self, is_online):
+        """Update user online status in database"""
+        try:
+            if self.user and self.user.is_authenticated:
+                # Fetch fresh user object
+                from django.contrib.auth import get_user_model
+                U = get_user_model()
+                user = U.objects.get(id=self.user.id)
+                user.is_online = is_online
+                user.last_seen = timezone.now()
+                user.save(update_fields=['is_online', 'last_seen'])
+                logger.debug(
+                    f"[Notify] User {user.id} marked {'online' if is_online else 'offline'}")
+        except Exception as e:
+            logger.error(f"Error updating user status in NotifyConsumer: {e}")
 
 
 class OdnixGatewayConsumer(AsyncWebsocketConsumer):
@@ -1298,7 +924,7 @@ class OdnixGatewayConsumer(AsyncWebsocketConsumer):
 class SidebarConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         user = self.scope.get("user")
-        
+
         # Fallback manual token check
         if not user or not user.is_authenticated:
             from urllib.parse import parse_qs
@@ -1359,4 +985,3 @@ class SidebarConsumer(AsyncWebsocketConsumer):
             "type": "request_count_update",
             "count": event["count"],
         }))
-

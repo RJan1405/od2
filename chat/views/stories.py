@@ -28,10 +28,10 @@ def repost_story(request):
     try:
         data = request.data
         original_story_id = data.get('story_id')
-        
+
         if not original_story_id:
             return Response({'success': False, 'error': 'Story ID is required'})
-        
+
         # Get the original story (could itself be a repost)
         original_story = get_object_or_404(
             Story,
@@ -42,11 +42,11 @@ def repost_story(request):
 
         # If the story is already a repost of another, always repost the root/original story.
         root_story = original_story.shared_from_story or original_story
-        
+
         # Can't repost your own story
         if root_story.user == request.user:
             return Response({'success': False, 'error': "You can't repost your own story"})
-        
+
         # Check if user already reposted this root story (prevent duplicates / repost-of-repost)
         existing_repost = Story.objects.filter(
             user=request.user,
@@ -54,10 +54,10 @@ def repost_story(request):
             is_active=True,
             expires_at__gt=timezone.now()
         ).exists()
-        
+
         if existing_repost:
             return Response({'success': False, 'error': 'You already reposted this story'})
-        
+
         # Create a new story that references the root/original story
         # The repost inherits the original's media but adds "Reposted from @username" context
         repost_story = Story.objects.create(
@@ -73,9 +73,10 @@ def repost_story(request):
             shared_from_story=root_story,  # Link to root original
             # expires_at automatically set to 24 hours from now
         )
-        
-        logger.info(f"Story {root_story.id} reposted by {request.user.username} as story {repost_story.id}")
-        
+
+        logger.info(
+            f"Story {root_story.id} reposted by {request.user.username} as story {repost_story.id}")
+
         # Send chat notification to original story owner
         if root_story.user != request.user:
             # Get or create DM chat between reposter and original story owner
@@ -85,11 +86,11 @@ def repost_story(request):
             ).filter(
                 participants=request.user
             ).first()
-            
+
             if not chat:
                 chat = Chat.objects.create(chat_type='private')
                 chat.participants.add(request.user, root_story.user)
-            
+
             # Create notification message
             message_content = f"🔄 {request.user.full_name} reposted your story"
             message = Message.objects.create(
@@ -98,15 +99,15 @@ def repost_story(request):
                 content=message_content,
                 message_type='text'
             )
-            
+
             # Update chat timestamp
             chat.updated_at = timezone.now()
             chat.save()
-            
+
             # Broadcast to story owner via WebSocket
             from chat.views.chat import broadcast_message_to_chat
             broadcast_message_to_chat(chat, message, exclude_sender=True)
-        
+
         return Response({
             'success': True,
             'message': 'Story reposted successfully!',
@@ -126,7 +127,7 @@ def repost_story(request):
                 }
             }
         })
-        
+
     except json.JSONDecodeError:
         return Response({'success': False, 'error': 'Invalid JSON data'})
     except Exception as e:
@@ -151,7 +152,7 @@ def create_story(request):
             text_size = float(text_size_val)
         except (ValueError, TypeError):
             text_size = 22.0
-            
+
         image_transform_json = request.data.get('image_transform', '{}')
         try:
             if isinstance(image_transform_json, str):
@@ -160,15 +161,16 @@ def create_story(request):
                 image_transform = image_transform_json
         except:
             image_transform = {}
-            
+
         media_file = request.data.get('media')
-        
-        logger.info(f"Creating story: type={story_type}, content={content}, has_media={bool(media_file)}, text_position={text_position}")
-        
+
+        logger.info(
+            f"Creating story: type={story_type}, content={content}, has_media={bool(media_file)}, text_position={text_position}")
+
         # Validate text_position
         if text_position not in ['top', 'center', 'bottom']:
             text_position = 'center'
-        
+
         # Handle media file - determine type from file
         if media_file:
             file_extension = os.path.splitext(media_file.name)[1].lower()
@@ -178,11 +180,11 @@ def create_story(request):
                 story_type = 'video'
             else:
                 return Response({'success': False, 'error': 'Invalid file type. Supported: jpg, png, gif, webp, mp4, mov, avi, mkv, webm'})
-        
+
         # Validation - need either content or media
         if not content and not media_file:
             return Response({'success': False, 'error': 'Please add text or an image'})
-        
+
         # Compress video if applicable
         if media_file and story_type == 'video':
             try:
@@ -192,10 +194,10 @@ def create_story(request):
             except Exception as e:
                 logger.error(f"Story video compression failed: {e}")
                 # Continue with original file
-        
+
         # FIXED: DON'T deactivate previous stories - allow multiple stories
         # REMOVED: Story.objects.filter(user=request.user, is_active=True).update(is_active=False)
-        
+
         # Create new story WITHOUT deactivating previous ones
         story = Story.objects.create(
             user=request.user,
@@ -210,9 +212,9 @@ def create_story(request):
             # is_active=True by default from model
             # expires_at set automatically by model (24 hours from now)
         )
-        
+
         logger.info(f"Story created successfully: {story.id}")
-        
+
         return Response({
             'success': True,
             'story': {
@@ -227,10 +229,11 @@ def create_story(request):
                 'image_transform': story.image_transform,
             }
         })
-        
+
     except Exception as e:
         logger.error(f"Error creating story: {e}")
         return Response({'success': False, 'error': str(e)})
+
 
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
@@ -244,11 +247,11 @@ def view_story(request, story_id):
             is_active=True,
             expires_at__gt=timezone.now()
         )
-        
+
         # Add view if not already viewed
         if not story.story_views.filter(viewer=request.user).exists():
             StoryView.objects.create(story=story, viewer=request.user)
-        
+
         # Build shared_from info if this is a repost
         shared_from = None
         if story.shared_from_story:
@@ -263,7 +266,7 @@ def view_story(request, story_id):
                 },
                 'is_expired': original.is_expired,
             }
-        
+
         return Response({
             'success': True,
             'story': {
@@ -292,12 +295,14 @@ def view_story(request, story_id):
                 'is_repost': story.shared_from_story is not None,
             }
         })
-        
+
     except Exception as e:
         logger.error(f"Error viewing story: {e}")
         return Response({'success': False, 'error': str(e)})
 
 # NEW: API endpoint to get all stories for a user (for multiple story viewing)
+
+
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -308,20 +313,20 @@ def get_user_stories(request, username):
             user = request.user
         else:
             user = get_object_or_404(CustomUser, username=username)
-        
+
         # Get all active stories for this user
         stories = Story.objects.filter(
             user=user,
             is_active=True,
             expires_at__gt=timezone.now()
         ).order_by('-created_at')
-        
+
         stories_data = []
         for story in stories:
             # Mark as viewed if not already
             if not story.story_views.filter(viewer=request.user).exists():
                 StoryView.objects.create(story=story, viewer=request.user)
-            
+
             # Build shared_from info if this is a repost
             shared_from = None
             if story.shared_from_story:
@@ -336,7 +341,7 @@ def get_user_stories(request, username):
                     },
                     'is_expired': original.is_expired,
                 }
-            
+
             stories_data.append({
                 'id': story.id,
                 'content': story.content,
@@ -362,15 +367,16 @@ def get_user_stories(request, username):
                 'shared_from': shared_from,
                 'is_repost': story.shared_from_story is not None,
             })
-        
+
         return Response({
             'success': True,
             'stories': stories_data
         })
-        
+
     except Exception as e:
         logger.error(f"Error getting user stories: {e}")
         return Response({'success': False, 'error': str(e)})
+
 
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
@@ -379,33 +385,34 @@ def get_following_stories(request):
     """Get stories from all users that the current user follows (Instagram-style feed)"""
     if not request.user.is_authenticated:
         return Response({'success': True, 'users': []})
-    
+
     try:
         from chat.models import Follow
-        
+
         # Get all users the current user is following
         following_users = Follow.objects.filter(
             follower=request.user
         ).values_list('following', flat=True)
-        
+
         # Get all active stories from followed users AND the current user's own stories
         user_ids = list(following_users)
         user_ids.append(request.user.id)  # Include current user's own stories
-        
+
         stories = Story.objects.filter(
             user_id__in=user_ids,
             is_active=True,
             expires_at__gt=timezone.now()
         ).select_related('user').order_by('user', '-created_at')
-        
+
         # Group stories by user
         users_with_stories = {}
         for story in stories:
             user_id = story.user.id
             if user_id not in users_with_stories:
                 # Check if user has any unviewed stories
-                has_unviewed = not story.story_views.filter(viewer=request.user).exists()
-                
+                has_unviewed = not story.story_views.filter(
+                    viewer=request.user).exists()
+
                 users_with_stories[user_id] = {
                     'user': {
                         'id': story.user.id,
@@ -418,7 +425,7 @@ def get_following_stories(request):
                     'has_unviewed': has_unviewed,
                     'story_count': 0
                 }
-            
+
             # Build shared_from info if this is a repost
             shared_from = None
             if story.shared_from_story:
@@ -433,7 +440,7 @@ def get_following_stories(request):
                     },
                     'is_expired': original.is_expired,
                 }
-            
+
             users_with_stories[user_id]['stories'].append({
                 'id': story.id,
                 'content': story.content,
@@ -454,7 +461,7 @@ def get_following_stories(request):
                 'is_repost': story.shared_from_story is not None,
             })
             users_with_stories[user_id]['story_count'] += 1
-        
+
         # Convert to list
         stories_feed = []
         for user_id, data in users_with_stories.items():
@@ -463,7 +470,7 @@ def get_following_stories(request):
                 **data,
                 'is_own': is_own
             })
-            
+
         # Ensure current user is always in the feed (for the "Add Story" button)
         if request.user.id not in users_with_stories:
             stories_feed.append({
@@ -479,19 +486,21 @@ def get_following_stories(request):
                 'story_count': 0,
                 'is_own': True
             })
-        
+
         # Sort: own stories first, then unviewed, then viewed
-        stories_feed.sort(key=lambda x: (not x.get('is_own', False), not x.get('has_unviewed', False)))
-        
+        stories_feed.sort(key=lambda x: (
+            not x.get('is_own', False), not x.get('has_unviewed', False)))
+
         return Response({
             'success': True,
             'users_with_stories': stories_feed,
             'total_users': len(stories_feed)
         })
-        
+
     except Exception as e:
         logger.error(f"Error getting following stories: {e}")
         return Response({'success': False, 'error': str(e)})
+
 
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
@@ -501,32 +510,33 @@ def mark_story_viewed(request):
     try:
         data = request.data
         story_id = data.get('story_id')
-        
+
         if not story_id:
             return Response({'success': False, 'error': 'Story ID is required'})
-        
+
         story = get_object_or_404(Story, id=story_id)
-        
+
         # Create or update view record
         view, created = StoryView.objects.get_or_create(
             story=story,
             viewer=request.user,
             defaults={'viewed_at': timezone.now()}
         )
-        
+
         if not created:
             # Update timestamp if already viewed
             view.viewed_at = timezone.now()
             view.save()
-        
+
         return Response({
             'success': True,
             'view_count': story.view_count
         })
-        
+
     except Exception as e:
         logger.error(f"Error in mark_story_viewed: {str(e)}")
         return Response({'success': False, 'error': 'Failed to mark story as viewed'})
+
 
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
@@ -536,25 +546,25 @@ def toggle_story_like(request):
     try:
         data = request.data
         story_id = data.get('story_id')
-        
+
         if not story_id:
             return Response({'success': False, 'error': 'Story ID is required'})
-        
+
         story = get_object_or_404(Story, id=story_id)
-        
+
         # Toggle like
         like_obj, created = StoryLike.objects.get_or_create(
             story=story,
             user=request.user
         )
-        
+
         if not created:
             # Unlike if already liked
             like_obj.delete()
             is_liked = False
         else:
             is_liked = True
-            
+
             # Send chat notification to story owner (only when liking, not unliking)
             if story.user != request.user:
                 try:
@@ -565,44 +575,47 @@ def toggle_story_like(request):
                     ).filter(
                         participants=request.user
                     ).first()
-                    
+
                     if not chat:
                         chat = Chat.objects.create(chat_type='private')
                         chat.participants.add(request.user, story.user)
-                    
+
                     # Create notification message
-                    message_content = f"❤️ {request.user.full_name} liked your story"
                     message = Message.objects.create(
                         chat=chat,
                         sender=request.user,
-                        content=message_content,
-                        message_type='text'
+                        content="❤️",
+                        message_type='text',
+                        story_reply=story
                     )
-                    
+
                     # Update chat timestamp
                     chat.updated_at = timezone.now()
                     chat.save()
-                    
+
                     # Broadcast to story owner via WebSocket
                     from chat.views.chat import broadcast_message_to_chat
-                    broadcast_message_to_chat(chat, message, exclude_sender=True)
+                    broadcast_message_to_chat(
+                        chat, message, exclude_sender=True)
                 except Exception as e:
                     # Log error but DON'T fail the like action
                     print(f"ERROR sending like notification: {e}")
                     logger.error(f"Failed to send like notification: {e}")
-        
+
         like_count = story.like_count
-        
+
         return Response({
             'success': True,
             'is_liked': is_liked,
             'like_count': like_count
         })
-        
+
     except Exception as e:
         logger.error(f"Error in toggle_story_like: {str(e)}")
-        print(f"DEBUG ERROR in toggle_story_like: {str(e)}") # Force print to console
+        # Force print to console
+        print(f"DEBUG ERROR in toggle_story_like: {str(e)}")
         return Response({'success': False, 'error': f'Failed to toggle story like: {str(e)}'})
+
 
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
@@ -613,25 +626,25 @@ def add_story_reply(request):
         data = request.data
         story_id = data.get('story_id')
         content = data.get('content', '').strip()
-        
+
         if not story_id:
             return Response({'success': False, 'error': 'Story ID is required'}, status=400)
-        
+
         if not content:
             return Response({'success': False, 'error': 'Reply content is required'})
-        
+
         if len(content) > 500:
             return Response({'success': False, 'error': 'Reply content too long (max 500 characters)'})
-        
+
         story = get_object_or_404(Story, id=story_id)
-        
+
         # Create the reply
         reply = StoryReply.objects.create(
             story=story,
             replier=request.user,
             content=content
         )
-        
+
         # Send reply as chat message to story owner (best effort)
         if story.user != request.user:
             try:
@@ -642,11 +655,11 @@ def add_story_reply(request):
                 ).filter(
                     participants=request.user
                 ).first()
-                
+
                 if not chat:
                     chat = Chat.objects.create(chat_type='private')
                     chat.participants.add(request.user, story.user)
-                
+
                 # Create message with story context
                 message = Message.objects.create(
                     chat=chat,
@@ -655,16 +668,16 @@ def add_story_reply(request):
                     message_type='text',
                     story_reply=story  # Link to the story
                 )
-                
+
                 # Update chat timestamp
                 chat.updated_at = timezone.now()
                 chat.save()
-                
+
                 # Broadcast to story owner via WebSocket with story metadata
                 from chat.views.chat import broadcast_message_to_chat
                 from channels.layers import get_channel_layer
                 from asgiref.sync import async_to_sync
-                
+
                 channel_layer = get_channel_layer()
                 async_to_sync(channel_layer.group_send)(
                     f'chat_{chat.id}',
@@ -702,17 +715,18 @@ def add_story_reply(request):
                     'reply_count': story.reply_count,
                     'message_error': str(e)  # Pass the error back
                 })
-        
+
         return Response({
             'success': True,
             'reply_id': reply.id,
             'reply_count': story.reply_count
         })
-        
+
     except Exception as e:
         logger.error(f"Error in add_story_reply: {str(e)}")
         print(f"DEBUG ERROR in add_story_reply: {str(e)}")
         return Response({'success': False, 'error': f'Failed to add story reply: {str(e)}'})
+
 
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
@@ -721,13 +735,14 @@ def get_story_replies(request, story_id):
     """Get replies for a story (for story poster or reply author)"""
     try:
         story = get_object_or_404(Story, id=story_id)
-        
+
         # Allow story poster OR users who have replied to see replies
         if story.user != request.user and not story.story_replies.filter(replier=request.user).exists():
             return Response({'success': False, 'error': 'Unauthorized'})
-        
-        replies = story.story_replies.select_related('replier').order_by('created_at')
-        
+
+        replies = story.story_replies.select_related(
+            'replier').order_by('created_at')
+
         replies_data = []
         for reply in replies:
             replies_data.append({
@@ -743,15 +758,16 @@ def get_story_replies(request, story_id):
                 'is_read': reply.is_read,
             })        # Mark replies as read
         story.story_replies.filter(is_read=False).update(is_read=True)
-        
+
         return Response({
             'success': True,
             'replies': replies_data
         })
-        
+
     except Exception as e:
         logger.error(f"Error in get_story_replies: {str(e)}")
         return Response({'success': False, 'error': 'Failed to get story replies'})
+
 
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
@@ -760,13 +776,14 @@ def get_story_viewers(request, story_id):
     """Get viewers for a story (only for story poster)"""
     try:
         story = get_object_or_404(Story, id=story_id)
-        
+
         # Only story poster can see viewers
         if story.user != request.user:
             return Response({'success': False, 'error': 'Unauthorized'})
-        
-        viewers = story.story_views.select_related('viewer').order_by('-viewed_at')
-        
+
+        viewers = story.story_views.select_related(
+            'viewer').order_by('-viewed_at')
+
         viewers_data = []
         for view in viewers:
             viewers_data.append({
@@ -776,16 +793,17 @@ def get_story_viewers(request, story_id):
                 'profile_picture_url': view.viewer.profile_picture_url,
                 'viewed_at': view.viewed_at.isoformat()
             })
-        
+
         return Response({
             'success': True,
             'viewers': viewers_data,
             'view_count': len(viewers_data)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in get_story_viewers: {str(e)}")
         return Response({'success': False, 'error': 'Failed to get story viewers'})
+
 
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
@@ -794,15 +812,15 @@ def delete_reply(request, reply_id):
     """Delete a story reply (only by reply author)"""
     try:
         reply = get_object_or_404(StoryReply, id=reply_id)
-        
+
         # Only reply author or story owner can delete
         if reply.replier != request.user and reply.story.user != request.user:
             return Response({'success': False, 'error': 'Unauthorized'})
-        
+
         reply.delete()
-        
+
         return Response({'success': True})
-        
+
     except Exception as e:
         logger.error(f"Error in delete_reply: {str(e)}")
         return Response({'success': False, 'error': 'Failed to delete reply'})
@@ -818,7 +836,7 @@ def get_story_inbox(request):
         replies = StoryReply.objects.filter(
             story__user=request.user
         ).select_related('replier', 'story').order_by('-created_at')
-        
+
         replies_data = []
         for reply in replies:
             replies_data.append({
@@ -846,15 +864,15 @@ def get_story_inbox(request):
                     'created_at': reply.story.created_at.isoformat(),
                 }
             })
-        
+
         # Mark all as read after fetching
         replies.filter(is_read=False).update(is_read=True)
-        
+
         return Response({
             'success': True,
             'replies': replies_data
         })
-        
+
     except Exception as e:
         logger.error(f"Error in get_story_inbox: {str(e)}")
         return Response({'success': False, 'error': 'Failed to get story inbox'})
@@ -870,12 +888,12 @@ def get_story_inbox_count(request):
             story__user=request.user,
             is_read=False
         ).count()
-        
+
         return Response({
             'success': True,
             'unread_count': unread_count
         })
-        
+
     except Exception as e:
         logger.error(f"Error in get_story_inbox_count: {str(e)}")
         return Response({'success': False, 'error': 'Failed to get count'})

@@ -11,6 +11,21 @@ logger = logging.getLogger(__name__)
 
 from django.core.cache import cache
 from .encryption import decrypt_text
+from django.utils import timezone
+from datetime import timedelta
+
+def is_user_online(user):
+    """
+    Check if a user is truly online based on is_online flag 
+    and last_seen within a recent window (30 seconds).
+    """
+    if not user:
+        return False
+    if not user.is_online or not user.last_seen:
+        return False
+    
+    # A user is considered online if last_seen was within the last 30 seconds
+    return timezone.now() - user.last_seen < timedelta(seconds=30)
 
 def should_send_call_notification(chat_id, sender_id):
     """

@@ -12,14 +12,14 @@ import logging
 import random
 from datetime import timedelta
 from chat.utils import notify_sidebar_for_chat, broadcast_message_to_chat, broadcast_message_consumed
-from chat.utils import clear_sidebar_unread
+from chat.utils import clear_sidebar_unread, is_user_online
 from chat.recommendations import ContentRecommender
 from chat.models import (
     CustomUser, Chat, Message, GroupJoinRequest, Follow, Story, StoryView,
     StoryLike, StoryReply, Scribe, Like, Comment, MessageDeletion, MessageRead,
     MessageReaction, StarredMessage, PinnedChat, SavedPost, Omzo, Dislike,
     DismissedSuggestion, ChatAcceptance, SavedScribeItem, SavedOmzoItem,
-    OmzoLike, OmzoDislike, OmzoComment, Block
+    OmzoLike, OmzoDislike, OmzoComment, Block, Notification
 )
 from chat.forms import ScribeForm
 from .media import handle_media_upload
@@ -2919,291 +2919,24 @@ def get_p2p_cache():
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def p2p_send_signal(request):
-    """Send a WebRTC signaling message to another user using database storage"""
-    try:
-        data = request.data
-        target_user_id = data.get('target_user_id')
-        chat_id = data.get('chat_id')
-        # Contains type, offer/answer/candidate, fileInfo
-        signal_data = data.get('signal_data')
-
-        if not all([chat_id, signal_data]):
-            return Response({'success': False, 'error': 'Missing required fields'})
-
-        # Determine if this is a file transfer signal
-        signal_type = signal_data.get(
-            'type', '') if isinstance(signal_data, dict) else ''
-        has_file_info = signal_data.get(
-            'fileInfo', None) if isinstance(signal_data, dict) else None
-        has_sdp_at_top = signal_data.get(
-            'sdp', None) if isinstance(signal_data, dict) else None
-        is_file_signal = has_file_info or (
-            signal_type in ('offer', 'answer', 'candidate', 'rejected', 'timeout') and
-            not has_sdp_at_top
-        )
-
-        # Verify user is in the chat
-        chat = get_object_or_404(Chat, id=chat_id)
-        if not chat.participants.filter(id=request.user.id).exists():
-            return Response({'success': False, 'error': 'Not a participant of this chat'}, status=403)
-
-        # Import P2PSignal model
-        from chat.models import P2PSignal
-
-        # Clean up old signals first
-        P2PSignal.cleanup_old_signals()
-
-        # When sending an offer, clear ALL OLD unconsumed signals for this chat
-        # to prevent "stale" call.end or candidates from messing up the new call.
-        sig_type = signal_data.get('type')
-        if sig_type == 'webrtc.offer' or sig_type == 'file.offer':
-            P2PSignal.objects.filter(
-                chat=chat, is_consumed=False).update(is_consumed=True)
-            logger.info(
-                f"Cleared all stale signals for chat {chat_id} before new offer ({sig_type})")
-        # For file transfers, check if target user is online
-        signal_type = signal_data.get(
-            'type', '') if isinstance(signal_data, dict) else ''
-        is_file_signal = signal_type.startswith('file.')
-
-        # If target_user_id is None, send to all other participants (for calls)
-        if target_user_id is None:
-            others = chat.participants.exclude(id=request.user.id)
-            for target_user in others:
-                # For file transfers, skip offline users
-                if is_file_signal and not target_user.is_online:
-                    continue
-                P2PSignal.objects.create(
-                    chat=chat,
-                    sender=request.user,
-                    target_user=target_user,
-                    signal_data=signal_data
-                )
-            logger.info(
-                f"P2P signal stored: {signal_data.get('type', 'unknown')} from user {request.user.id} to {others.count()} users")
-        else:
-            # Verify target user is in the chat
-            target_user = chat.participants.filter(id=target_user_id).first()
-            if not target_user:
-                return Response({'success': False, 'error': 'Target user not in chat'}, status=403)
-
-            # For file transfers, check if target user is online
-            if is_file_signal and not target_user.is_online:
-                return Response({'success': False, 'error': 'User is offline', 'offline': True})
-
-            # Store signal in database
-            P2PSignal.objects.create(
-                chat=chat,
-                sender=request.user,
-                target_user=target_user,
-                signal_data=signal_data
-            )
-            logger.info(
-                f"P2P signal stored: {signal_data.get('type', 'unknown')} from user {request.user.id} to user {target_user_id}")
-
-            # Push signal in real-time via the chat WebSocket group so web clients don't need to poll
-            # Push signal in real-time via the chat WebSocket group
-            try:
-                from channels.layers import get_channel_layer
-                from asgiref.sync import async_to_sync
-                channel_layer = get_channel_layer()
-
-                # Always relay the signal to the chat group for real-time signaling
-                async_to_sync(channel_layer.group_send)(
-                    f"chat_{chat_id}",
-                    {
-                        'type': 'p2p_signal',
-                        'signal': signal_data,
-                        'sender_id': request.user.id,
-                        'target_user_id': target_user_id,
-                    }
-                )
-                logger.info(
-                    f"P2P signal ({signal_data.get('type', 'unknown')}) pushed via WebSocket to chat_{chat_id}")
-
-            except Exception as ws_err:
-                logger.warning(
-                    f"Could not push P2P signal via WebSocket (DB fallback active): {ws_err}")
-
-            # Special case: for webrtc.offer, also send a notification to the target user(s)
-            if signal_data.get('type') == 'webrtc.offer':
-                try:
-                    from chat.utils import should_send_call_notification
-                    if should_send_call_notification(chat.id, request.user.id):
-                        # Construct notification event
-                        notif_event = {
-                            'type': 'notify.call',
-                            'from_user_id': request.user.id,
-                            'chat_id': chat.id,
-                            'audio_only': bool(signal_data.get('audioOnly', False)),
-                            'from_full_name': request.user.full_name,
-                            'from_avatar': request.user.profile_picture.url if request.user.profile_picture else None,
-                        }
-
-                        # Determine target users
-                        if target_user_id:
-                            target_users = [target_user]
-                        else:
-                            target_users = chat.participants.exclude(
-                                id=request.user.id)
-
-                        for target in target_users:
-                            async_to_sync(channel_layer.group_send)(
-                                f"user_notify_{target.id}",
-                                notif_event
-                            )
-                        logger.info(
-                            f"Broadcasted incoming call notification to {len(list(target_users))} users")
-                except Exception as notif_err:
-                    logger.warning(
-                        f"Could not send call notification: {notif_err}")
-
-    except Exception as e:
-        logger.error(f"Error in p2p_send_signal: {str(e)}")
-        return Response({'success': False, 'error': 'Failed to send signal'})
+    """Deprecated HTTP signaling endpoint"""
+    return Response({'success': False, 'message': 'Deprecated endpoints - please use WebSockets.', 'deprecated': True})
 
 
 @api_view(['GET', 'POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def p2p_get_signals(request, chat_id):
-    """Poll for pending WebRTC signals from database
-
-    Query params:
-        signal_type: 'call' for webrtc call signals, 'file' for file transfer signals
-                     If not specified, returns all signals (legacy behavior)
-    """
-    try:
-        chat = get_object_or_404(Chat, id=chat_id)
-
-        # Verify user is in the chat
-        if not chat.participants.filter(id=request.user.id).exists():
-            return Response({'success': False, 'error': 'Not a participant of this chat'}, status=403)
-
-        # Get signal type filter from query params
-        signal_type_filter = request.GET.get(
-            'signal_type', None)  # 'call', 'file', or None
-
-        # Import P2PSignal model
-        from chat.models import P2PSignal
-
-        # Get unconsumed signals for this user in this chat
-        # For call signals (webrtc.*), get recent ones (last 5 minutes) to allow time for pickup
-        recent_cutoff = timezone.now() - timedelta(seconds=300)
-
-        signals = P2PSignal.objects.filter(
-            chat=chat,
-            target_user=request.user,
-            is_consumed=False
-        ).select_related('sender')
-
-        signals_data = []
-        signal_ids = []
-        call_signal_ids = []  # Track call signals separately
-
-        for signal in signals:
-            signal_type = signal.signal_data.get(
-                'type', '') if isinstance(signal.signal_data, dict) else ''
-            has_file_info = signal.signal_data.get(
-                'fileInfo') if isinstance(signal.signal_data, dict) else None
-            has_sdp_at_top = signal.signal_data.get(
-                'sdp') if isinstance(signal.signal_data, dict) else None
-
-            # Determine if this is a call signal or file transfer signal
-            is_call_signal = signal_type.startswith('webrtc.') or signal_type == 'call.end' or (
-                signal_type in ('offer', 'answer', 'ice', 'candidate') and
-                has_sdp_at_top and not has_file_info
-            )
-            is_file_signal = has_file_info or (
-                signal_type in ('offer', 'answer', 'candidate', 'rejected', 'timeout') and
-                not has_sdp_at_top
-            )
-
-            # Filter based on signal_type_filter
-            if signal_type_filter == 'call' and not is_call_signal:
-                continue  # Skip non-call signals when requesting call signals
-            if signal_type_filter == 'file' and not is_file_signal:
-                continue  # Skip non-file signals when requesting file signals
-
-            # For call signals, only include recent ones
-            if is_call_signal and signal.created_at < recent_cutoff:
-                continue
-
-            signals_data.append({
-                'sender_id': signal.sender.id,
-                'sender_name': signal.sender.full_name,
-                'sender_avatar': signal.sender.profile_picture_url,
-                'signal': signal.signal_data,
-                'timestamp': signal.created_at.isoformat()
-            })
-            signal_ids.append(signal.id)
-            if is_call_signal:
-                call_signal_ids.append(signal.id)
-
-        # Mark signals as consumed (but keep call signals available for a bit longer)
-        if signal_ids:
-            # Mark non-call signals as consumed immediately
-            non_call_ids = [
-                sid for sid in signal_ids if sid not in call_signal_ids]
-            if non_call_ids:
-                P2PSignal.objects.filter(
-                    id__in=non_call_ids).update(is_consumed=True)
-
-            # For call signals, mark as consumed but keep them for a short window
-            # This allows User B to receive them even if they arrive late
-            if call_signal_ids:
-                # Mark as consumed but don't delete yet - they'll be cleaned up by cleanup_old_signals
-                P2PSignal.objects.filter(
-                    id__in=call_signal_ids).update(is_consumed=True)
-                logger.info(
-                    f"P2P call signals ({len(call_signal_ids)}) retrieved by user {request.user.id}")
-
-            logger.info(
-                f"P2P signals consumed by user {request.user.id}: {len(signal_ids)} total ({len(call_signal_ids)} call signals)")
-
-        return Response({
-            'success': True,
-            'signals': signals_data
-        })
-
-    except Exception as e:
-        logger.error(f"Error in p2p_get_signals: {str(e)}")
-        return Response({'success': False, 'error': 'Failed to get signals'})
+    """Deprecated HTTP signaling endpoint"""
+    return Response({'success': False, 'signals': [], 'message': 'Deprecated endpoints - please use WebSockets.', 'deprecated': True})
 
 
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def p2p_clear_signals(request):
-    """Clear all P2P signals for a user when they go offline - frees server load"""
-    try:
-        from chat.models import P2PSignal
-
-        # Delete all unconsumed signals where this user is sender or target
-        deleted_as_sender = P2PSignal.objects.filter(
-            sender=request.user,
-            is_consumed=False
-        ).delete()[0]
-
-        deleted_as_target = P2PSignal.objects.filter(
-            target_user=request.user,
-            is_consumed=False
-        ).delete()[0]
-
-        total_deleted = deleted_as_sender + deleted_as_target
-
-        if total_deleted > 0:
-            logger.info(
-                f"P2P signals cleared for user {request.user.id}: {total_deleted} signals removed")
-
-        return Response({
-            'success': True,
-            'cleared': total_deleted
-        })
-
-    except Exception as e:
-        logger.error(f"Error in p2p_clear_signals: {str(e)}")
-        return Response({'success': False, 'error': 'Failed to clear signals'})
+    """Deprecated HTTP signaling endpoint"""
+    return Response({'success': False, 'message': 'Deprecated endpoints - please use WebSockets.', 'deprecated': True})
 
 
 @api_view(['POST'])
