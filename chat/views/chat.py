@@ -615,17 +615,19 @@ def get_chat_messages(request, chat_id):
     is_message_request = False
     if chat.chat_type == 'private':
         # Check if user has already accepted
-        is_accepted = ChatAcceptance.objects.filter(chat=chat, user=request.user).exists()
-        
+        is_accepted = ChatAcceptance.objects.filter(
+            chat=chat, user=request.user).exists()
+
         other_user = chat.participants.exclude(id=request.user.id).first()
         if other_user:
             from chat.models import Block
             # If we've blocked them, hide the accept banner (consider it "processed")
             if Block.objects.filter(blocker=request.user, blocked=other_user).exists():
                 is_accepted = True
-        
+
         if not is_accepted:
-            has_they_messaged = chat.messages.exclude(sender=request.user).exclude(message_type='system').exists()
+            has_they_messaged = chat.messages.exclude(
+                sender=request.user).exclude(message_type='system').exists()
             if has_they_messaged:
                 is_message_request = True
 
@@ -725,8 +727,10 @@ def get_chat_messages(request, chat_id):
         other_user = chat.participants.exclude(id=request.user.id).first()
         if other_user:
             from chat.models import Block
-            is_other_blocked = Block.objects.filter(blocker=request.user, blocked=other_user).exists()
-            am_i_blocked = Block.objects.filter(blocker=other_user, blocked=request.user).exists()
+            is_other_blocked = Block.objects.filter(
+                blocker=request.user, blocked=other_user).exists()
+            am_i_blocked = Block.objects.filter(
+                blocker=other_user, blocked=request.user).exists()
 
     return Response({
         'success': True,
@@ -797,7 +801,8 @@ def send_message(request):
         message = Message.objects.create(
             chat=chat,
             sender=request.user,
-            content=encrypt_text(content or f'Sent {media_type}' if media_file else content or 'Shared content'),
+            content=encrypt_text(
+                content or f'Sent {media_type}' if media_file else content or 'Shared content'),
             message_type=message_type,
             media_url=media_url,
             media_type=media_type,
@@ -817,7 +822,8 @@ def send_message(request):
         notify_sidebar_for_chat(
             chat=chat,
             sender=request.user,
-            last_message_text='🔒 One-time message' if message.one_time else decrypt_text(message.content)
+            last_message_text='🔒 One-time message' if message.one_time else decrypt_text(
+                message.content)
         )
 
         # 🔥 Broadcast the message to all participants via WebSocket
@@ -914,14 +920,15 @@ def get_chats_api(request):
             other_user = None
             is_accepted = True
             is_message_request = False
-            
+
             if chat.chat_type == 'private':
                 other_user = chat.participants.exclude(
                     id=request.user.id).first()
-                
+
                 # Check acceptance
-                is_accepted = ChatAcceptance.objects.filter(chat=chat, user=request.user).exists()
-                
+                is_accepted = ChatAcceptance.objects.filter(
+                    chat=chat, user=request.user).exists()
+
                 from chat.models import Block
                 # If we've blocked them, hide the accept banner
                 if other_user and Block.objects.filter(blocker=request.user, blocked=other_user).exists():
@@ -929,7 +936,8 @@ def get_chats_api(request):
 
                 # It's a request if WE haven't accepted and THEY messaged
                 if not is_accepted:
-                    has_they_messaged = chat.messages.exclude(sender=request.user).exclude(message_type='system').exists()
+                    has_they_messaged = chat.messages.exclude(
+                        sender=request.user).exclude(message_type='system').exists()
                     if has_they_messaged:
                         is_message_request = True
 
@@ -1053,7 +1061,7 @@ def create_group(request):
         data = request.data
         name = data.get('name', '').strip()
         description = data.get('description', '').strip()
-        
+
         try:
             max_participants = int(data.get('max_participants', 100))
         except (ValueError, TypeError):
@@ -1082,6 +1090,13 @@ def create_group(request):
         chat.participants.add(request.user)
 
         participant_ids = data.get('participants', [])
+        if isinstance(participant_ids, str):
+            import json
+            try:
+                participant_ids = json.loads(participant_ids)
+            except Exception:
+                pass
+
         if participant_ids and isinstance(participant_ids, list):
             users_to_add = CustomUser.objects.filter(id__in=participant_ids)
             chat.participants.add(*users_to_add)
@@ -1097,6 +1112,7 @@ def create_group(request):
         logger.error(f"Error in create_group: {str(e)}")
         return Response({'success': False, 'error': 'Failed to create group'})
 
+
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -1104,7 +1120,7 @@ def manage_chat_acceptance(request):
     """Manage chat request: accept or block"""
     try:
         chat_id = request.data.get('chat_id')
-        action = request.data.get('action') # 'accept' or 'block'
+        action = request.data.get('action')  # 'accept' or 'block'
 
         if not chat_id or not action:
             return Response({'success': False, 'error': 'chat_id and action are required'})
@@ -1122,15 +1138,20 @@ def manage_chat_acceptance(request):
         elif action == 'block':
             if other_user:
                 from chat.models import Block, Follow, FollowRequest
-                Block.objects.get_or_create(blocker=request.user, blocked=other_user)
-                
-                Follow.objects.filter(follower=request.user, following=other_user).delete()
-                Follow.objects.filter(follower=other_user, following=request.user).delete()
-                FollowRequest.objects.filter(requester=request.user, target=other_user).delete()
-                FollowRequest.objects.filter(requester=other_user, target=request.user).delete()
-                
+                Block.objects.get_or_create(
+                    blocker=request.user, blocked=other_user)
+
+                Follow.objects.filter(
+                    follower=request.user, following=other_user).delete()
+                Follow.objects.filter(
+                    follower=other_user, following=request.user).delete()
+                FollowRequest.objects.filter(
+                    requester=request.user, target=other_user).delete()
+                FollowRequest.objects.filter(
+                    requester=other_user, target=request.user).delete()
+
                 return Response({'success': True, 'message': 'User blocked'})
-            
+
         return Response({'success': False, 'error': 'Invalid action or user'})
     except Exception as e:
         logger.error(f"Error in manage_chat_acceptance: {str(e)}")
@@ -1297,12 +1318,14 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
         following_ids = list(Follow.objects.filter(
             follower=user).values_list('following_id', flat=True))
         following_ids.append(user.id)
-        
+
         # Also exclude blocked users and users who blocked us
         from .social import Block
-        blocked_ids = list(Block.objects.filter(blocker=user).values_list('blocked_id', flat=True))
-        blocked_me_ids = list(Block.objects.filter(blocked=user).values_list('blocker_id', flat=True))
-        
+        blocked_ids = list(Block.objects.filter(
+            blocker=user).values_list('blocked_id', flat=True))
+        blocked_me_ids = list(Block.objects.filter(
+            blocked=user).values_list('blocker_id', flat=True))
+
         following_ids = list(set(following_ids + blocked_ids + blocked_me_ids))
 
     # Create a cache key unique to this user (no hour component - cleared on follow/unfollow)
@@ -1327,7 +1350,8 @@ def _get_explore_content_batch(page=1, per_page=15, user=None):
             .values_list('id', flat=True)
             .order_by('-timestamp'))
 
-        omzo_query = Omzo.objects.exclude(user_id__in=following_ids).filter(user__is_private=False)
+        omzo_query = Omzo.objects.exclude(
+            user_id__in=following_ids).filter(user__is_private=False)
         omzo_ids = list(
             omzo_query.values_list('id', flat=True)
             .order_by('-created_at'))
@@ -2907,9 +2931,12 @@ def p2p_send_signal(request):
             return Response({'success': False, 'error': 'Missing required fields'})
 
         # Determine if this is a file transfer signal
-        signal_type = signal_data.get('type', '') if isinstance(signal_data, dict) else ''
-        has_file_info = signal_data.get('fileInfo', None) if isinstance(signal_data, dict) else None
-        has_sdp_at_top = signal_data.get('sdp', None) if isinstance(signal_data, dict) else None
+        signal_type = signal_data.get(
+            'type', '') if isinstance(signal_data, dict) else ''
+        has_file_info = signal_data.get(
+            'fileInfo', None) if isinstance(signal_data, dict) else None
+        has_sdp_at_top = signal_data.get(
+            'sdp', None) if isinstance(signal_data, dict) else None
         is_file_signal = has_file_info or (
             signal_type in ('offer', 'answer', 'candidate', 'rejected', 'timeout') and
             not has_sdp_at_top
@@ -2930,8 +2957,10 @@ def p2p_send_signal(request):
         # to prevent "stale" call.end or candidates from messing up the new call.
         sig_type = signal_data.get('type')
         if sig_type == 'webrtc.offer' or sig_type == 'file.offer':
-            P2PSignal.objects.filter(chat=chat, is_consumed=False).update(is_consumed=True)
-            logger.info(f"Cleared all stale signals for chat {chat_id} before new offer ({sig_type})")
+            P2PSignal.objects.filter(
+                chat=chat, is_consumed=False).update(is_consumed=True)
+            logger.info(
+                f"Cleared all stale signals for chat {chat_id} before new offer ({sig_type})")
         # For file transfers, check if target user is online
         signal_type = signal_data.get(
             'type', '') if isinstance(signal_data, dict) else ''
@@ -2989,10 +3018,12 @@ def p2p_send_signal(request):
                         'target_user_id': target_user_id,
                     }
                 )
-                logger.info(f"P2P signal ({signal_data.get('type', 'unknown')}) pushed via WebSocket to chat_{chat_id}")
+                logger.info(
+                    f"P2P signal ({signal_data.get('type', 'unknown')}) pushed via WebSocket to chat_{chat_id}")
 
             except Exception as ws_err:
-                logger.warning(f"Could not push P2P signal via WebSocket (DB fallback active): {ws_err}")
+                logger.warning(
+                    f"Could not push P2P signal via WebSocket (DB fallback active): {ws_err}")
 
             # Special case: for webrtc.offer, also send a notification to the target user(s)
             if signal_data.get('type') == 'webrtc.offer':
@@ -3013,16 +3044,19 @@ def p2p_send_signal(request):
                         if target_user_id:
                             target_users = [target_user]
                         else:
-                            target_users = chat.participants.exclude(id=request.user.id)
+                            target_users = chat.participants.exclude(
+                                id=request.user.id)
 
                         for target in target_users:
                             async_to_sync(channel_layer.group_send)(
                                 f"user_notify_{target.id}",
                                 notif_event
                             )
-                        logger.info(f"Broadcasted incoming call notification to {len(list(target_users))} users")
+                        logger.info(
+                            f"Broadcasted incoming call notification to {len(list(target_users))} users")
                 except Exception as notif_err:
-                    logger.warning(f"Could not send call notification: {notif_err}")
+                    logger.warning(
+                        f"Could not send call notification: {notif_err}")
 
     except Exception as e:
         logger.error(f"Error in p2p_send_signal: {str(e)}")
