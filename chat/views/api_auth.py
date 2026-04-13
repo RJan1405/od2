@@ -30,9 +30,11 @@ if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
             logger.info("FIREBASE: Admin SDK initialized successfully.")
         else:
-            logger.warning("FIREBASE Warning: FIREBASE_CREDENTIALS not found in settings.")
+            logger.warning(
+                "FIREBASE Warning: FIREBASE_CREDENTIALS not found in settings.")
     except Exception as e:
         logger.error(f"FIREBASE Error: Failed to initialize Admin SDK: {e}")
+
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -56,6 +58,7 @@ def api_check_availability(request):
 
     return Response({'success': True})
 
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def api_firebase_register(request):
@@ -66,17 +69,20 @@ def api_firebase_register(request):
     try:
         data = request.data
         id_token = data.get('idToken')
-        reg_data = data.get('registrationData') # JSON object with user details
+        # JSON object with user details
+        reg_data = data.get('registrationData')
 
         if not id_token or not reg_data:
             return Response({'success': False, 'error': 'idToken and registrationData are required'}, status=400)
 
         # 1. Verification Bypass Logic
-        use_phone_verification = getattr(settings, 'ENABLE_PHONE_VERIFICATION', True)
-        
+        use_phone_verification = getattr(
+            settings, 'ENABLE_PHONE_VERIFICATION', True)
+
         if not use_phone_verification:
             # If set to False, we skip Firebase handshake and trust reg_data
-            logger.info("BYPASS: OTP verification skipped via settings. Using provided phone number.")
+            logger.info(
+                "BYPASS: OTP verification skipped via settings. Using provided phone number.")
             firebase_phone = reg_data.get('phone_number')
             if not firebase_phone:
                 return Response({'success': False, 'error': 'Phone number is required in registrationData for bypass'}, status=400)
@@ -84,9 +90,10 @@ def api_firebase_register(request):
             # Standard Secure Mode: Verify the token with Firebase
             try:
                 # Allow for clock skew (up to 60 seconds) to prevent "token used too early" errors
-                decoded_token = firebase_auth.verify_id_token(id_token, clock_skew_seconds=60)
+                decoded_token = firebase_auth.verify_id_token(
+                    id_token, clock_skew_seconds=60)
                 firebase_phone = decoded_token.get('phone_number')
-                
+
                 if not firebase_phone:
                     return Response({'success': False, 'error': 'Could not extract phone number from token'}, status=400)
             except Exception as e:
@@ -99,7 +106,7 @@ def api_firebase_register(request):
         password = reg_data.get('password')
         name = reg_data.get('name', '')
         lastname = reg_data.get('lastname', '')
-        
+
         # 3. Validation
         if not username or not email or not password:
             return Response({'success': False, 'error': 'Incomplete registration data'}, status=400)
@@ -142,6 +149,7 @@ def api_firebase_register(request):
     except Exception as e:
         logger.error(f"Firebase Registration Error: {e}")
         return Response({'success': False, 'error': str(e)}, status=500)
+
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -188,6 +196,7 @@ def api_login(request):
                     'full_name': user.full_name,
                     'profile_picture': user.profile_picture.url if user.profile_picture else '',
                     'profile_picture_url': user.profile_picture_url,
+                    'cover_image_url': user.cover_image_url,
                     'bio': getattr(user, 'bio', ''),
                     'is_verified': user.is_verified,
                     'is_private': user.is_private,
@@ -223,6 +232,7 @@ def api_logout(request):
         Token.objects.filter(user=request.user).delete()
     return Response({'success': True}, status=200)
 
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def api_register(request):
@@ -235,28 +245,29 @@ def api_register(request):
         name = data.get('name', '')
         lastname = data.get('lastname', '')
         phone_number = data.get('phone_number', '').strip()
-        
+
         if not username or not email or not password:
             return Response({
                 'success': False,
                 'error': 'Username, email, and password are required'
             }, status=400)
-            
+
         if CustomUser.objects.filter(username=username).exists():
             return Response({'success': False, 'error': 'Username already exists'}, status=400)
-            
+
         if CustomUser.objects.filter(email=email).exists():
             return Response({'success': False, 'error': 'Email already exists'}, status=400)
-            
+
         if phone_number and CustomUser.objects.filter(phone_number=phone_number).exists():
             return Response({'success': False, 'error': 'Phone number already registered'}, status=400)
-            
-        use_phone_verification = getattr(settings, 'ENABLE_PHONE_VERIFICATION', False)
-        
+
+        use_phone_verification = getattr(
+            settings, 'ENABLE_PHONE_VERIFICATION', False)
+
         if use_phone_verification:
             if not phone_number:
                 return Response({'success': False, 'error': 'Phone number is required for verification'}, status=400)
-            
+
             # Store all registration data JSON-encoded to create user later
             reg_data = {
                 'username': username,
@@ -266,19 +277,21 @@ def api_register(request):
                 'lastname': lastname,
                 'phone_number': phone_number
             }
-            
+
             # Delete any existing registration tokens for this phone
-            PhoneVerificationToken.objects.filter(phone_number=phone_number, user=None).delete()
-            
+            PhoneVerificationToken.objects.filter(
+                phone_number=phone_number, user=None).delete()
+
             # Create token with registration data
             token_obj = PhoneVerificationToken.objects.create(
                 phone_number=phone_number,
                 registration_data=json.dumps(reg_data)
             )
-            
+
             # Twilio has been removed as Firebase is now the primary SMS provider.
             # We just print the code here for legacy compatibility or staging use cases.
-            print(f"VERIFICATION SMS (Twilio Removed): Verification code for {phone_number} is {token_obj.token}")
+            print(
+                f"VERIFICATION SMS (Twilio Removed): Verification code for {phone_number} is {token_obj.token}")
 
             return Response({
                 'success': True,
@@ -300,7 +313,7 @@ def api_register(request):
             )
             user.set_password(password)
             user.save()
-            
+
             user = authenticate(username=username, password=password)
             if user is not None:
                 token_obj, _ = Token.objects.get_or_create(user=user)
@@ -317,6 +330,7 @@ def api_register(request):
                 return Response({'success': False, 'error': 'Registration successful but login failed'}, status=500)
     except Exception as e:
         return Response({'success': False, 'error': str(e)}, status=500)
+
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -348,7 +362,7 @@ def api_verify_phone_otp(request):
             # If the token contains registration data, create the user NOW
             if token_obj.registration_data:
                 reg_data = json.loads(token_obj.registration_data)
-                
+
                 # Check if someone else took the username or email while waiting
                 if CustomUser.objects.filter(username=reg_data['username']).exists():
                     return Response({'success': False, 'error': 'Username already taken'}, status=400)
@@ -396,8 +410,6 @@ def api_verify_phone_otp(request):
     except Exception as e:
         logger.error(f"OTP verification error: {e}")
         return Response({'success': False, 'error': str(e)}, status=500)
-
-
 
 
 @api_view(["GET", "POST"])
@@ -453,6 +465,7 @@ def api_profile(request):
                 'full_name': user.full_name,
                 'profile_picture': user.profile_picture.url if user.profile_picture else '',
                 'profile_picture_url': user.profile_picture_url,
+                'cover_image_url': user.cover_image_url,
                 'bio': getattr(user, 'bio', ''),
                 'is_verified': user.is_verified,
                 'is_private': user.is_private,
@@ -484,6 +497,7 @@ def api_profile(request):
         'full_name': user.full_name,
         'profile_picture': user.profile_picture.url if user.profile_picture else '',
         'profile_picture_url': user.profile_picture_url,
+        'cover_image_url': user.cover_image_url,
         'bio': getattr(user, 'bio', ''),
         'is_verified': user.is_verified,
         'is_private': user.is_private,
@@ -503,6 +517,8 @@ def api_profile(request):
     }, status=200)
 
 # Deprecated: Not used in token-based auth
+
+
 def get_csrf_token(request):
     return Response({'success': True}, status=200)
 
@@ -524,8 +540,9 @@ def api_user_profile(request, username):
     # Determine if current user can see this profile's content
     is_following = False
     if not user == request.user and request.user.is_authenticated:
-        is_following = Follow.objects.filter(follower=request.user, following=user).exists()
-    
+        is_following = Follow.objects.filter(
+            follower=request.user, following=user).exists()
+
     can_view_content = True
     if not user == request.user:
         if user.is_private and not is_following:
@@ -600,12 +617,12 @@ def api_user_profile(request, username):
             if scribe.original_scribe:
                 original = scribe.original_scribe
                 original_type = 'scribe'
-                
+
                 # Copy code fields from original to top level for better visibility in feeds
                 scribe_obj['code_html'] = getattr(original, 'code_html', '')
                 scribe_obj['code_css'] = getattr(original, 'code_css', '')
                 scribe_obj['code_js'] = getattr(original, 'code_js', '')
-                
+
                 original_data = {
                     'id': original.id,
                     'content': original.content,
@@ -718,7 +735,8 @@ def api_user_profile(request, username):
     # Follow request status (from ME to THEM)
     follow_request_status = None
     if not user == request.user and request.user.is_authenticated:
-        req = FollowRequest.objects.filter(requester=request.user, target=user).first()
+        req = FollowRequest.objects.filter(
+            requester=request.user, target=user).first()
         if req:
             follow_request_status = req.status
 
@@ -726,8 +744,8 @@ def api_user_profile(request, username):
     is_requesting_follow = False
     if not user == request.user and request.user.is_authenticated:
         is_requesting_follow = FollowRequest.objects.filter(
-            requester=user, 
-            target=request.user, 
+            requester=user,
+            target=request.user,
             status='pending'
         ).exists()
 
@@ -742,6 +760,7 @@ def api_user_profile(request, username):
             'full_name': user.full_name,
             'profile_picture': user.profile_picture.url if user.profile_picture else '',
             'profile_picture_url': user.profile_picture_url,
+            'cover_image_url': user.cover_image_url,
             'bio': getattr(user, 'bio', ''),
             'is_verified': user.is_verified,
             'is_private': user.is_private,
@@ -761,6 +780,7 @@ def api_user_profile(request, username):
         'omzos': omzos_data
     }, status=200)
 
+
 @database_sync_to_async
 def get_user_from_token_sync(token_key):
     """Bridge for WebSocket authentication."""
@@ -771,4 +791,3 @@ def get_user_from_token_sync(token_key):
     except Exception:
         from django.contrib.auth.models import AnonymousUser
         return AnonymousUser()
-

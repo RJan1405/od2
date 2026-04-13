@@ -274,7 +274,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         if not signal_data or not target_user_id:
             return
 
-        # 1. Direct user-to-user signaling delivery
+        # 1. Direct user-to-user signaling delivery for chat websockets
         await self.channel_layer.group_send(
             f"user_{target_user_id}",
             {
@@ -283,6 +283,20 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 "sender_id": self.user.id,
             }
         )
+
+        # 2. Also send to the global notification consumer for incoming call rings (if it's a webrtc.offer)
+        if signal_data.get("type") == "webrtc.offer":
+            await self.channel_layer.group_send(
+                f"user_notify_{target_user_id}",
+                {
+                    "type": "notify.call",
+                    "from_user_id": self.user.id,
+                    "chat_id": getattr(self, "chat_id", None) or data.get("chat_id", 0),
+                    "audio_only": signal_data.get("audioOnly", False),
+                    "from_full_name": getattr(self.user, "full_name", self.user.username),
+                    "from_avatar": getattr(self.user, 'profile_picture_url', None) or "/media/default-avatar.png",
+                }
+            )
 
     # ---------------- DATABASE ----------------
     @database_sync_to_async

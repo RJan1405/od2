@@ -60,7 +60,8 @@ class CustomUser(AbstractUser):
     name = models.CharField(max_length=50)
     lastname = models.CharField(max_length=50)
     email = models.EmailField(unique=True, null=True, blank=True)
-    phone_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    phone_number = models.CharField(
+        max_length=20, unique=True, null=True, blank=True)
     profile_picture = models.ImageField(
         upload_to='profile_pics/', blank=True, null=True)
     is_online = models.BooleanField(default=False)
@@ -108,6 +109,13 @@ class CustomUser(AbstractUser):
         # Return a stylish gradient placeholder with user initials style
         # Rounded square with Odnix brand gradient (#667eea to #764ba2)
         return f'https://ui-avatars.com/api/?name={self.username}&background=667eea&color=fff&size=200&rounded=false&bold=true&format=svg'
+
+    @property
+    def cover_image_url(self):
+        """Get cover image URL if it exists"""
+        if self.cover_image and hasattr(self.cover_image, 'url'):
+            return self.cover_image.url
+        return None
 
     def mark_online(self):
         self.is_online = True
@@ -807,7 +815,8 @@ class PhoneVerificationToken(models.Model):
     user = models.ForeignKey(
         CustomUser, on_delete=models.CASCADE, related_name='phone_verification_tokens', null=True, blank=True)
     phone_number = models.CharField(max_length=20, null=True, blank=True)
-    registration_data = models.TextField(null=True, blank=True) # JSON encoded data to store registration info
+    # JSON encoded data to store registration info
+    registration_data = models.TextField(null=True, blank=True)
     token = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
