@@ -142,3 +142,15 @@ certs/
 # ⚙️ Misc / Project Specific
 # ========================
 odnix-mobile/
+
+encryption_architecture.md
+firebase_otp_registration devmode
+firebase_otp_registration.md
+otp_responsibilities.md
+READ_RECEIPTS_IMPLEMENTATION.md
+test-call-connection.html
+test_live_encryption.py
+TESTING_GUIDE.md
+to-do.txt
+verification_results.txt
+verify_api.py

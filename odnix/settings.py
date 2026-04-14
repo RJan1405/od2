@@ -9,8 +9,7 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-
-#---------------------------Production starts----------------------------
+# ---------------------------Production starts----------------------------
 
 """
 
@@ -94,11 +93,19 @@ else:
 
 
 """
-#---------------------------Production Ends----------------------------
+# ---------------------------Production Ends----------------------------
 
-#---------------------------Local Starts----------------------------
+# ---------------------------Local Starts----------------------------
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-key-in-production-123456789')
+# Load environment variables from .env if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env')
+except ImportError:
+    pass
+
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY', 'django-insecure-change-this-key-in-production-123456789')
 
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
@@ -152,12 +159,28 @@ CSRF_TRUSTED_ORIGINS = [
     "http://192.168.0.104:8080",
     "http://127.0.0.1:8080",
     "http://127.0.0.1:3000",
-    "https://*.trycloudflare.com", # Allow all Cloudflare tunnels
+    "https://*.trycloudflare.com",  # Allow all Cloudflare tunnels
     "https://api.odnix.org",
-    "https://odnixdeploy.onrender.com",     
+    "https://odnixdeploy.onrender.com",
 ]
 
-#---------------------------Local Ends----------------------------
+# ---------------------------Local Ends----------------------------
+
+# ENVIRONMENT SETUP
+ENV = os.environ.get('ENV', 'development')  # development, staging, production
+
+# ANALYTICS CONFIGURATION
+# Strictly enable analytics only in production to prevent test data pollution
+ENABLE_ANALYTICS = os.environ.get(
+    'ENABLE_ANALYTICS', str(ENV == 'production')).lower() == 'true'
+POSTHOG_API_KEY = os.environ.get('POSTHOG_API_KEY', '')
+POSTHOG_HOST = os.environ.get('POSTHOG_HOST', 'https://app.posthog.com')
+
+# CELERY SETTINGS (Basic Configuration)
+CELERY_BROKER_URL = os.environ.get(
+    'CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get(
+    'CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
 
 INSTALLED_APPS = [
     'jazzmin',  # Must be before django.contrib.admin
@@ -173,6 +196,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'chat',
+    'analytics',
 ]
 
 REST_FRAMEWORK = {
@@ -191,6 +215,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'analytics.middleware.PostHogAPIMiddleware',
 ]
 
 ROOT_URLCONF = 'odnix.urls'
@@ -316,7 +341,8 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 # TODO: Replace with your actual Gmail address
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'optinal46@gmail.com')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'qxeo wtqn xpsn jvuv')
+EMAIL_HOST_PASSWORD = os.environ.get(
+    'EMAIL_HOST_PASSWORD', 'qxeo wtqn xpsn jvuv')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # For development/testing - uncomment to see emails in console
@@ -338,9 +364,11 @@ if FIREBASE_CRED_JSON:
         import json
         FIREBASE_CREDENTIALS = json.loads(FIREBASE_CRED_JSON)
     except Exception:
-        FIREBASE_CREDENTIALS = os.path.join(BASE_DIR, 'firebase-service-account.json')
+        FIREBASE_CREDENTIALS = os.path.join(
+            BASE_DIR, 'firebase-service-account.json')
 else:
-    FIREBASE_CREDENTIALS = os.path.join(BASE_DIR, 'firebase-service-account.json')
+    FIREBASE_CREDENTIALS = os.path.join(
+        BASE_DIR, 'firebase-service-account.json')
 
 # Session settings
 SESSION_COOKIE_AGE = 86400  # 1 day

@@ -24,3 +24,7 @@ imageio-ffmpeg==0.4.9
 pycryptodome==3.19.0
 filetype==1.2.0
 firebase-admin==6.5.0
+
+# Analytics and Background Tasks
+celery>=5.4.0
+posthog>=3.5.0
