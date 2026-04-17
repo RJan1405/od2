@@ -516,6 +516,13 @@ def mark_story_viewed(request):
 
         story = get_object_or_404(Story, id=story_id)
 
+        # Do not record views for the story creator
+        if story.user == request.user:
+            return Response({
+                'success': True,
+                'view_count': story.view_count
+            })
+
         # Create or update view record
         view, created = StoryView.objects.get_or_create(
             story=story,
@@ -781,8 +788,11 @@ def get_story_viewers(request, story_id):
         if story.user != request.user:
             return Response({'success': False, 'error': 'Unauthorized'})
 
-        viewers = story.story_views.select_related(
+        viewers = story.story_views.exclude(viewer=story.user).select_related(
             'viewer').order_by('-viewed_at')
+
+        liked_user_ids = set(
+            story.story_likes.values_list('user_id', flat=True))
 
         viewers_data = []
         for view in viewers:
@@ -791,7 +801,8 @@ def get_story_viewers(request, story_id):
                 'username': view.viewer.username,
                 'full_name': view.viewer.full_name,
                 'profile_picture_url': view.viewer.profile_picture_url,
-                'viewed_at': view.viewed_at.isoformat()
+                'viewed_at': view.viewed_at.isoformat(),
+                'is_liked_by_viewer': view.viewer.id in liked_user_ids
             })
 
         return Response({

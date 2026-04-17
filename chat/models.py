@@ -415,8 +415,8 @@ class Story(models.Model):
 
     @property
     def view_count(self):
-        """Get story view count"""
-        return self.story_views.count()
+        """Get story view count (excluding the author)"""
+        return self.story_views.exclude(viewer=self.user).count()
 
     @property
     def like_count(self):
