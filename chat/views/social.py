@@ -681,7 +681,8 @@ def post_scribe(request):
     try:
         # Parse form data properly from request.data
         content = request.data.get('content', '').strip()
-        image_file = request.data.get('image')  # MultiPartParser handles FILES in request.data
+        # MultiPartParser handles FILES in request.data
+        image_file = request.data.get('image')
         content_type = request.data.get('content_type', 'text')
         code_html = request.data.get('code_html')
         code_css = request.data.get('code_css')
@@ -1106,7 +1107,7 @@ def delete_omzo(request):
                 omzo.video_file.delete(save=False)
             except Exception:
                 pass
-        
+
         if omzo.thumbnail:
             try:
                 omzo.thumbnail.delete(save=False)
@@ -1589,7 +1590,8 @@ def toggle_follow(request):
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Error sending follow request notification: {e}")
+                    logger.error(
+                        f"Error sending follow request notification: {e}")
             else:
                 # Public account - follow directly
                 Follow.objects.create(
@@ -1755,7 +1757,8 @@ def get_blocked_users(request):
     try:
         # Import inside to avoid circular deps if any
         from chat.models import Block
-        blocked_relations = Block.objects.filter(blocker=request.user).select_related('blocked')
+        blocked_relations = Block.objects.filter(
+            blocker=request.user).select_related('blocked')
         data = []
         for rel in blocked_relations:
             u = rel.blocked
@@ -2283,11 +2286,12 @@ def global_search(request):
             follow_request_status = None
             if request.user.is_authenticated:
                 # Optimized follow check
-                is_following = Follow.objects.filter(follower=request.user, following=u).exists()
+                is_following = Follow.objects.filter(
+                    follower=request.user, following=u).exists()
                 if not is_following:
                     req = FollowRequest.objects.filter(
-                        requester=request.user, 
-                        target=u, 
+                        requester=request.user,
+                        target=u,
                         status='pending'
                     ).first()
                     if req:
@@ -2396,6 +2400,17 @@ def update_theme(request):
     except Exception as e:
         logger.error(f"Error updating theme: {str(e)}")
         return Response({'success': False, 'error': 'Failed to update theme'})
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def mark_notification_read(request, notification_id):
+    """
+    Dummy endpoint to gracefully handle formatting of mark_notification_read requests
+    and respond with success since notifications are built ad-hoc from activity.
+    """
+    return Response({'success': True})
 
 
 @api_view(['GET', 'POST'])
@@ -2982,14 +2997,16 @@ def get_omzo_batch(request):
 
     try:
         cursor = request.GET.get('cursor')
-        limit = min(int(request.GET.get('limit', 10)), 20)  # Max 20 per request
+        limit = min(int(request.GET.get('limit', 10)),
+                    20)  # Max 20 per request
         exclude_ids_str = request.GET.get('exclude', '')
 
         # Parse excluded IDs
         exclude_ids = set()
         if exclude_ids_str:
             try:
-                exclude_ids = set(int(x) for x in exclude_ids_str.split(',') if x.strip())
+                exclude_ids = set(int(x)
+                                  for x in exclude_ids_str.split(',') if x.strip())
             except ValueError:
                 pass
 

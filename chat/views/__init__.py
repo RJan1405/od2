@@ -28,7 +28,7 @@ from .social import (
     toggle_comment_like, get_scribe, get_scribe_comments, toggle_follow, toggle_block, manage_follow_request,
     toggle_account_privacy, get_follow_requests, follow_states, dismiss_suggestion,
     get_hashtag_scribes, get_trending_hashtags, get_user_mentions,
-    search_users_for_mention, update_theme, get_all_activity,
+    search_users_for_mention, update_theme, get_all_activity, mark_notification_read,
     global_search, get_blocked_users,
     get_profile_followers, get_profile_following,
     toggle_save_post, delete_post, report_post, get_saved_posts, copy_post_link,

@@ -783,7 +783,9 @@ class DismissedSuggestion(models.Model):
 class EmailVerificationToken(models.Model):
     """Model for email verification tokens (OTP)"""
     user = models.ForeignKey(
-        CustomUser, on_delete=models.CASCADE, related_name='verification_tokens')
+        CustomUser, on_delete=models.CASCADE, related_name='verification_tokens', null=True, blank=True)
+    email = models.EmailField(null=True, blank=True)
+    registration_data = models.TextField(null=True, blank=True)
     # Changed to 6 chars for OTP, removed unique=True
     token = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -807,7 +809,7 @@ class EmailVerificationToken(models.Model):
     def __str__(self):
         if self.user:
             return f"OTP for {self.user.username}: {self.token}"
-        return f"OTP for {self.phone_number}: {self.token}"
+        return f"OTP for {self.email}: {self.token}"
 
 
 class PhoneVerificationToken(models.Model):
