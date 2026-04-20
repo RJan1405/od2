@@ -847,6 +847,7 @@ export const api = {
         let content = '';
         let scribeId = undefined;
         let omzoId = undefined;
+        let commentId = undefined;
         let previewImage = undefined;
 
         if (item.type === 'like') {
@@ -857,6 +858,7 @@ export const api = {
           type = 'comment';
           content = `commented: "${item.comment_content || ''}"`;
           scribeId = item.scribe?.id?.toString();
+          commentId = item.comment_id?.toString();
         } else if (item.type === 'follow') {
           type = 'follow'; // map to connection_request or new type
           content = 'started following you';
@@ -876,6 +878,7 @@ export const api = {
           type = 'omzo_comment';
           content = `commented on your omzo: "${item.comment_content || ''}"`;
           omzoId = item.omzo?.id?.toString();
+          commentId = item.comment_id?.toString();
         } else if (item.type === 'post_report') {
           type = 'post_report';
           content = `reported your post for ${item.reason || 'violation'}`;
@@ -901,7 +904,8 @@ export const api = {
           timestamp: new Date(item.timestamp),
           read: item.is_read || false, // Use backend's is_read field if available
           scribeId,
-          omzoId
+          omzoId,
+          commentId
         };
       });
 

@@ -885,11 +885,23 @@ def send_message(request):
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def get_chats_api(request):
-    """API endpoint to get user's chats for the slide-in panel"""
+    """API endpoint to get user's chats for the slide-in panel with private preferences"""
 
     try:
         user_chats = Chat.objects.filter(
             participants=request.user).select_related('admin')
+
+        # Get user's private chat list from profile and ensure all are integers
+        user_private_ids = request.user.private_chat_ids or []
+        try:
+            user_private_ids = [int(id) for id in user_private_ids if id]
+        except (ValueError, TypeError):
+            user_private_ids = []
+            logger.warning(
+                f"Invalid private_chat_ids for user {request.user.id}: {request.user.private_chat_ids}")
+
+        logger.info(
+            f"🔍 get_chats_api: user {request.user.id}, private_chat_ids from DB: {request.user.private_chat_ids}, converted to ints: {user_private_ids}")
 
         chats_data = []
         for chat in user_chats:
@@ -968,6 +980,13 @@ def get_chats_api(request):
                     'sender_name': last_message.sender.full_name if last_message.sender else None,
                 }
 
+            # Check if user marked this chat as private
+            user_marked_private = chat.id in user_private_ids
+
+            if user_marked_private:
+                logger.info(
+                    f"Chat {chat.id} is marked as private for user {request.user.id}")
+
             chat_info = {
                 'id': chat.id,
                 'name': chat.name if chat.chat_type == 'group' else ((other_user.full_name or other_user.username) if other_user else 'Unknown'),
@@ -975,6 +994,7 @@ def get_chats_api(request):
                 'is_group': chat.chat_type == 'group',
                 'is_accepted': is_accepted,
                 'is_message_request': is_message_request,
+                'user_marked_private': user_marked_private,
                 'last_message': last_message_data,
                 'last_message_time': last_message.timestamp.isoformat() if last_message else None,
                 'unread_count': unread_count,
@@ -997,9 +1017,13 @@ def get_chats_api(request):
 
             chats_data.append(chat_info)
 
+        logger.info(
+            f"🔍 get_chats_api returning {len(chats_data)} chats. Private chats: {[c['id'] for c in chats_data if c.get('user_marked_private')]}")
         return Response({'success': True, 'chats': chats_data})
     except Exception as e:
         logger.error(f"Error in get_chats_api: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return Response({'success': False, 'error': 'Failed to load chats'})
 
 
@@ -2821,6 +2845,76 @@ def remove_group_member(request, chat_id):
     except Exception as e:
         logger.error(f"Error removing group member: {str(e)}")
         return Response({'success': False, 'error': 'Failed to remove member'})
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def update_chat_preference(request):
+    """API endpoint to toggle chat between private and public preference"""
+
+    try:
+        chat_id = request.data.get('chat_id')
+        is_private = request.data.get('is_private')
+
+        if not chat_id or is_private is None:
+            return Response({
+                'success': False,
+                'error': 'chat_id and is_private are required'
+            })
+
+        # Convert chat_id to int
+        try:
+            chat_id = int(chat_id)
+        except (ValueError, TypeError):
+            return Response({
+                'success': False,
+                'error': 'Invalid chat_id'
+            })
+
+        # Verify user is participant in chat
+        chat = get_object_or_404(Chat, id=chat_id, participants=request.user)
+
+        # Get user's current private chat list
+        private_ids = list(request.user.private_chat_ids or [])
+
+        # Ensure all IDs are integers
+        private_ids = [int(id) for id in private_ids if id]
+
+        # Update the list based on preference
+        if is_private:
+            if chat_id not in private_ids:
+                private_ids.append(chat_id)
+        else:
+            if chat_id in private_ids:
+                private_ids.remove(chat_id)
+
+        # Save the updated preference
+        request.user.private_chat_ids = private_ids
+        request.user.save(update_fields=['private_chat_ids'])
+
+        # Refresh from DB to verify it was saved
+        request.user.refresh_from_db()
+        logger.info(
+            f"✅ Updated chat preference for user {request.user.id}: chat {chat_id} is_private={is_private}")
+        logger.info(
+            f"   Saved to DB: private_chat_ids={request.user.private_chat_ids}")
+
+        return Response({
+            'success': True,
+            'message': f'Chat moved to {"Private" if is_private else "Public"} tab',
+            'is_private': is_private,
+            'chat_id': chat_id
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Error updating chat preference: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return Response({
+            'success': False,
+            'error': 'Failed to update chat preference'
+        })
 
 
 @api_view(['POST'])

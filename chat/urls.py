@@ -147,6 +147,8 @@ urlpatterns = [
          views.update_typing_status, name='update_typing'),
     path('api/chat/<int:chat_id>/typing-status/',
          views.get_typing_status, name='get_typing_status'),
+    path('api/update-chat-preference/',
+         views.update_chat_preference, name='update_chat_preference'),
 
     # Message Context Menu
     path('api/message/<int:message_id>/context-menu/',
@@ -291,6 +293,8 @@ urlpatterns = [
     path('api/omzo/<int:omzo_id>/comments/',
          views.get_omzo_comments, name='get_omzo_comments'),
     path('api/omzo/comment/', views.add_omzo_comment, name='add_omzo_comment'),
+    path('api/omzo/comment/like/', views.toggle_omzo_comment_like,
+         name='toggle_omzo_comment_like'),
     path('api/omzo/report/', views.report_omzo, name='report_omzo'),
     path('api/omzo/delete/', views.delete_omzo, name='delete_omzo'),
     path('api/omzo/<int:omzo_id>/details/',

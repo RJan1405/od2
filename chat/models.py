@@ -62,7 +62,7 @@ class CustomUser(AbstractUser):
     email = models.EmailField(unique=True, null=True, blank=True)
     phone_number = models.CharField(
         max_length=20, unique=True, null=True, blank=True)
-    profile_picture = models.ImageField(
+    profile_picture = models.FileField(
         upload_to='profile_pics/', blank=True, null=True)
     is_online = models.BooleanField(default=False)
     last_seen = models.DateTimeField(default=timezone.now)
@@ -76,8 +76,13 @@ class CustomUser(AbstractUser):
     gender = models.CharField(
         max_length=10, choices=GENDER_CHOICES, default='male')  # Gender preference
     bio = models.TextField(max_length=500, blank=True, null=True)
-    cover_image = models.ImageField(
+    cover_image = models.FileField(
         upload_to='cover_pics/', blank=True, null=True)
+    private_chat_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of chat IDs marked as private by the user"
+    )
 
     def __str__(self):
         return f"{self.name} {self.lastname} (@{self.username})"
@@ -141,7 +146,7 @@ class Chat(models.Model):
         max_length=10, choices=CHAT_TYPE_CHOICES, default='private')
     name = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField(blank=True, null=True)
-    group_avatar = models.ImageField(
+    group_avatar = models.FileField(
         upload_to='group_avatars/', blank=True, null=True)
     admin = models.ForeignKey(CustomUser, on_delete=models.CASCADE,
                               related_name='admin_chats', null=True, blank=True)
@@ -505,7 +510,7 @@ class Scribe(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
     # FIXED: Enhanced media support for scribes
-    image = models.ImageField(
+    image = models.FileField(
         upload_to='scribe_images/', blank=True, null=True)  # Direct image upload
 
     # Code Scribe fields (optional)
@@ -1148,6 +1153,27 @@ class OmzoComment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     parent = models.ForeignKey(
         'self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
+
+    @property
+    def like_count(self):
+        """Get the count of likes on this comment"""
+        return self.omzo_comment_likes.count()
+
+
+class OmzoCommentLike(models.Model):
+    """Model for omzo comment likes"""
+    user = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE, related_name='user_omzo_comment_likes')
+    omzo_comment = models.ForeignKey(
+        OmzoComment, on_delete=models.CASCADE, related_name='omzo_comment_likes')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'omzo_comment')
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"{self.user.full_name} liked an omzo comment"
 
 
 class OmzoReport(models.Model):

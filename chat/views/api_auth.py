@@ -3,6 +3,7 @@ from django.db import transaction
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.core.files.base import ContentFile
 from ..models import CustomUser, PhoneVerificationToken
 from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
 from rest_framework.authentication import TokenAuthentication
@@ -15,6 +16,7 @@ from rest_framework.parsers import MultiPartParser, JSONParser, FormParser
 import logging
 import json
 import os
+import uuid
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 
@@ -384,10 +386,46 @@ def api_profile(request):
         try:
             # Handle file uploads from request.data (MultiPartParser puts them there)
             if 'avatar' in request.data:
-                user.profile_picture = request.data['avatar']
+                avatar_file = request.data['avatar']
+
+                # Delete old profile picture if exists
+                if user.profile_picture:
+                    user.profile_picture.delete(save=False)
+
+                # Check actual file format by reading magic bytes
+                avatar_file.seek(0)
+                header = avatar_file.read(12)
+                avatar_file.seek(0)
+                is_gif = header.startswith(
+                    b'GIF87a') or header.startswith(b'GIF89a')
+
+                # FileField doesn't process images, so GIFs are preserved intact
+                if is_gif:
+                    logger.info(f"🎬 Actual GIF detected in avatar")
+
+                user.profile_picture = avatar_file
+                logger.info(f"📸 Avatar uploaded: {avatar_file.name}")
 
             if 'cover_image' in request.data:
-                user.cover_image = request.data['cover_image']
+                cover_file = request.data['cover_image']
+
+                # Delete old cover if exists
+                if user.cover_image:
+                    user.cover_image.delete(save=False)
+
+                # Check actual file format by reading magic bytes
+                cover_file.seek(0)
+                header = cover_file.read(12)
+                cover_file.seek(0)
+                is_gif = header.startswith(
+                    b'GIF87a') or header.startswith(b'GIF89a')
+
+                # FileField doesn't process images, so GIFs are preserved intact
+                if is_gif:
+                    logger.info(f"🎬 Actual GIF detected in cover")
+
+                user.cover_image = cover_file
+                logger.info(f"📸 Cover image uploaded: {cover_file.name}")
 
             # Handle text fields from request.data
             display_name = request.data.get('displayName')
@@ -414,6 +452,7 @@ def api_profile(request):
             if bio is not None:
                 user.bio = bio
 
+            # Single save with all changes
             user.save()
 
             user_data = {
@@ -438,14 +477,13 @@ def api_profile(request):
                 'post_count': user.scribes.count(),
             }
 
-            user.save()
-
             return Response({
                 'success': True,
                 'user': user_data,
                 'data': user_data
             }, status=200)
         except Exception as e:
+            logger.error(f"Profile update error: {e}", exc_info=True)
             return Response({'success': False, 'error': str(e)}, status=500)
 
     user_response = {

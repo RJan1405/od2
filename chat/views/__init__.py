@@ -17,7 +17,7 @@ from .chat import (
     get_chats_api, load_more_explore_content, send_call_notification,
     get_dm_requests, get_dm_requests_count, accept_dm_request, decline_dm_request,
     auto_accept_chat_for_sender, check_dm_request, api_explore_feed,
-    manage_chat_acceptance
+    manage_chat_acceptance, update_chat_preference
 )
 from .media import (
     handle_media_upload, serve_media_file
@@ -36,7 +36,7 @@ from .social import (
     track_omzo_view, report_omzo, toggle_private_chat,
     toggle_save_scribe, toggle_save_omzo, get_saved_items,
     api_repost,
-    delete_omzo,
+    delete_omzo, toggle_omzo_comment_like,
 )
 from .stories import (
     create_story, view_story, get_user_stories, get_following_stories, mark_story_viewed,

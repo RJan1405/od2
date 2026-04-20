@@ -20,7 +20,7 @@ from asgiref.sync import async_to_sync
 from chat.models import (
     CustomUser, Chat, Scribe, Comment, CommentLike, Like, Dislike, Follow, Block, FollowRequest,
     Hashtag, ScribeHashtag, Mention, StoryReply, StoryLike, Story,
-    SavedPost, PostReport, Omzo, OmzoLike, OmzoDislike, OmzoComment, OmzoReport,
+    SavedPost, PostReport, Omzo, OmzoLike, OmzoDislike, OmzoComment, OmzoCommentLike, OmzoReport,
     ProfileView, PinnedChat, DismissedSuggestion, SavedScribeItem, SavedOmzoItem
 )
 from chat.forms import ScribeForm, ProfileUpdateForm
@@ -795,51 +795,81 @@ def post_scribe(request):
                 }
             })
 
+        # Check if image is actual GIF BEFORE form processing
+        is_gif = False
+        image_bytes = None
+        if image_file:
+            try:
+                image_file.seek(0)
+                image_bytes = image_file.read(12)
+                # GIF magic bytes: 47 49 46 38 37 61 (GIF87a) or 47 49 46 38 39 61 (GIF89a)
+                is_gif = image_bytes.startswith(
+                    b'GIF87a') or image_bytes.startswith(b'GIF89a')
+                logger.info(f"🎬 PRE-FORM: Checking {image_file.name}")
+                logger.info(
+                    f"🎬 PRE-FORM: is_gif={is_gif}, header_bytes={image_bytes[:6].hex()}")
+                image_file.seek(0)
+            except Exception as e:
+                logger.error(f"Error checking GIF magic bytes: {e}")
+                is_gif = False
+                image_file.seek(0)
+
         # Use Django form for proper validation for standard posts
         form_data = {'content': content} if content else {}
         files_data = {'image': image_file} if image_file else {}
 
         form = ScribeForm(form_data, files_data)
         if form.is_valid():
+            # Reset file pointer after form validation
+            if image_file:
+                image_file.seek(0)
+
             # Create scribe using form
             scribe = form.save(commit=False)
 
-            # Compress image if present
+            # Compress image if present (but skip GIFs to preserve animation)
             if image_file:
-                try:
-                    from PIL import Image, ImageOps
-                    from io import BytesIO
-                    from django.core.files.base import ContentFile
-                    import os
+                # Use the GIF detection we did before form processing
+                if not is_gif:  # Only compress non-GIF images
+                    try:
+                        from PIL import Image, ImageOps
+                        from io import BytesIO
+                        from django.core.files.base import ContentFile
+                        import os
 
-                    # Open image
-                    img = Image.open(image_file)
-                    img = ImageOps.exif_transpose(img)
+                        # Open image
+                        img = Image.open(image_file)
+                        img = ImageOps.exif_transpose(img)
 
-                    # Resize if > 900px (Aggressive optimization for 100KB target)
-                    if img.width > 900 or img.height > 900:
-                        img.thumbnail((900, 900), Image.Resampling.LANCZOS)
+                        # Resize if > 900px (Aggressive optimization for 100KB target)
+                        if img.width > 900 or img.height > 900:
+                            img.thumbnail((900, 900), Image.Resampling.LANCZOS)
 
-                    # Compress - Force WebP for maximum storage efficiency
-                    output_io = BytesIO()
+                        # Compress - Force WebP for maximum storage efficiency
+                        output_io = BytesIO()
 
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
 
-                    # Save as WebP with 70% quality
-                    img.save(output_io, format='WEBP',
-                             quality=70, optimize=True)
+                        # Save as WebP with 70% quality
+                        img.save(output_io, format='WEBP',
+                                 quality=70, optimize=True)
 
-                    # Update the file in the model instance with .webp extension
-                    original_name = os.path.splitext(image_file.name)[0]
-                    new_filename = f"{original_name}_opt.webp"
+                        # Update the file in the model instance with .webp extension
+                        original_name = os.path.splitext(image_file.name)[0]
+                        new_filename = f"{original_name}_opt.webp"
 
-                    if output_io.tell() > 0:
-                        scribe.image = ContentFile(
-                            output_io.getvalue(), name=new_filename)
-                except Exception as e:
-                    logger.error(f"Scribe image compression failed: {e}")
-                    # If compression fails, it will just use the original file from form.save logic (managed by Django)
+                        if output_io.tell() > 0:
+                            scribe.image = ContentFile(
+                                output_io.getvalue(), name=new_filename)
+                    except Exception as e:
+                        logger.error(f"Scribe image compression failed: {e}")
+                        # If compression fails, it will just use the original file from form.save logic (managed by Django)
+                else:
+                    # For GIFs, preserve original without compression to maintain animation
+                    logger.info(
+                        f"🎬 GIF detected - preserving animation: {image_file.name}")
+                    scribe.image = image_file
 
             scribe.user = request.user
             scribe.save()
@@ -1336,7 +1366,7 @@ def add_comment(request):
                 'user_username': comment.user.username,
                 'user_initials': comment.user.initials,
                 'user_profile_picture': comment.user.profile_picture_url,
-                'timestamp': comment.timestamp.strftime('%b %d, %Y %H:%M'),
+                'timestamp': comment.timestamp.isoformat(),
                 'is_own': comment.user == request.user,
             }
         })
@@ -1476,7 +1506,7 @@ def get_scribe_comments(request, scribe_id):
                 'user_username': comment.user.username,
                 'user_initials': comment.user.initials,
                 'user_profile_picture': comment.user.profile_picture_url,
-                'timestamp': comment.timestamp.strftime('%b %d, %Y %H:%M'),
+                'timestamp': comment.timestamp.isoformat(),
                 'is_own': comment.user == request.user,
                 'is_liked': comment.id in user_liked_comment_ids,
                 'like_count': comment.like_count,
@@ -1492,7 +1522,7 @@ def get_scribe_comments(request, scribe_id):
                     'user_username': reply.user.username,
                     'user_initials': reply.user.initials,
                     'user_profile_picture': reply.user.profile_picture_url,
-                    'timestamp': reply.timestamp.strftime('%b %d, %Y %H:%M'),
+                    'timestamp': reply.timestamp.isoformat(),
                     'is_own': reply.user == request.user,
                     'is_liked': reply.id in user_liked_comment_ids,
                     'like_count': reply.like_count,
@@ -2465,6 +2495,7 @@ def get_all_activity(request):
                     'id': comment.scribe.id,
                     'content': comment.scribe.content[:50] + '...' if len(comment.scribe.content) > 50 else comment.scribe.content,
                 },
+                'comment_id': comment.id,
                 'comment_content': comment.content[:80] + '...' if len(comment.content) > 80 else comment.content,
             })
 
@@ -2569,6 +2600,7 @@ def get_all_activity(request):
                     'id': comment.omzo.id,
                     'caption': comment.omzo.caption[:50] + '...' if comment.omzo.caption and len(comment.omzo.caption) > 50 else (comment.omzo.caption or 'Omzo'),
                 },
+                'comment_id': comment.id,
                 'comment_content': comment.content[:80] + '...' if len(comment.content) > 80 else comment.content,
             })
 
@@ -3272,8 +3304,15 @@ def get_omzo_comments(request, omzo_id):
         offset = int(request.GET.get('offset', 0))
 
         qs = OmzoComment.objects.filter(omzo=omzo).select_related(
-            'user').order_by('-created_at')
+            'user').prefetch_related('omzo_comment_likes').order_by('-created_at')
         total = qs.count()
+
+        # Get all omzo comment IDs the current user has liked
+        user_liked_comment_ids = set(
+            OmzoCommentLike.objects.filter(user=request.user).values_list(
+                'omzo_comment_id', flat=True)
+        )
+
         comments = []
         for rc in qs[offset:offset+limit]:
             comments.append({
@@ -3281,6 +3320,8 @@ def get_omzo_comments(request, omzo_id):
                 'content': rc.content,
                 'created_at': rc.created_at.isoformat(),
                 'parent': rc.parent_id,
+                'is_liked': rc.id in user_liked_comment_ids,
+                'like_count': rc.like_count,
                 'user': {
                     'id': rc.user.id,
                     'username': rc.user.username,
@@ -3361,6 +3402,46 @@ def add_omzo_comment(request):
     except Exception as e:
         logger.error(f"Error adding omzo comment: {str(e)}")
         return Response({'success': False, 'error': 'Failed to add comment'})
+
+
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def toggle_omzo_comment_like(request):
+    """Toggle like on an omzo comment"""
+    try:
+        data = request.data
+        comment_id = data.get('comment_id')
+
+        if not comment_id:
+            return Response({'success': False, 'error': 'Comment ID is required'})
+
+        try:
+            comment = OmzoComment.objects.get(id=comment_id)
+        except OmzoComment.DoesNotExist:
+            return Response({'success': False, 'error': 'Comment not found'})
+
+        # Toggle like
+        like_obj = OmzoCommentLike.objects.filter(
+            user=request.user, omzo_comment=comment).first()
+
+        if like_obj:
+            like_obj.delete()
+            is_liked = False
+        else:
+            OmzoCommentLike.objects.create(
+                user=request.user, omzo_comment=comment)
+            is_liked = True
+
+        return Response({
+            'success': True,
+            'is_liked': is_liked,
+            'like_count': comment.like_count
+        })
+
+    except Exception as e:
+        logger.error(f"Error in toggle_omzo_comment_like: {str(e)}")
+        return Response({'success': False, 'error': 'Failed to toggle like'})
 
 
 @api_view(['POST'])
